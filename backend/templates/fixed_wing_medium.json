@@ -1,0 +1,30 @@
+{
+  "name": "固定翼中等复杂度环境",
+  "type": "fixed_wing",
+  "complexity": "medium",
+  "test_type": "navigation",
+  "description": "适用于固定翼飞机导航算法测试的中等难度环境",
+  "config": {
+    "scenario": {
+      "terrain": "hilly",
+      "weather": "windy",
+      "obstacles": [
+        "tree",
+        "lamp_post"
+      ]
+    },
+    "physics": {
+      "flight_dynamics": "medium",
+      "aerodynamics": "detailed",
+      "collision_detection": "enabled"
+    },
+    "reward": {
+      "reward_value": 15,
+      "penalty_rules": [
+        "collision",
+        "out_of_bounds"
+      ],
+      "target_threshold": 0.08
+    }
+  }
+}

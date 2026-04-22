@@ -1,0 +1,26 @@
+{
+  "name": "固定翼基础环境",
+  "type": "fixed_wing",
+  "complexity": "basic",
+  "test_type": "maneuver",
+  "config": {
+    "scenario": {
+      "terrain": "flat",
+      "weather": "clear",
+      "obstacles": []
+    },
+    "physics": {
+      "flight_dynamics": "standard",
+      "aerodynamics": "basic",
+      "collision_detection": "enabled"
+    },
+    "reward": {
+      "reward_value": 10,
+      "penalty_rules": [
+        "collision",
+        "out_of_bounds"
+      ],
+      "target_threshold": 0.1
+    }
+  }
+}

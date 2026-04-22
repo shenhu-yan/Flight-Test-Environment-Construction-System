@@ -1,0 +1,30 @@
+{
+  "name": "旋翼高级环境",
+  "type": "rotor",
+  "complexity": "advanced",
+  "test_type": "fault_simulation",
+  "config": {
+    "scenario": {
+      "terrain": "mountainous",
+      "weather": "windy",
+      "obstacles": [
+        "building",
+        "tree"
+      ]
+    },
+    "physics": {
+      "flight_dynamics": "advanced",
+      "aerodynamics": "detailed",
+      "collision_detection": "enabled"
+    },
+    "reward": {
+      "reward_value": 20,
+      "penalty_rules": [
+        "collision",
+        "out_of_bounds",
+        "fault"
+      ],
+      "target_threshold": 0.05
+    }
+  }
+}

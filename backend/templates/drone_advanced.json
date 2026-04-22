@@ -1,0 +1,33 @@
+{
+  "name": "无人机高级测试环境",
+  "type": "drone",
+  "complexity": "high",
+  "test_type": "obstacle_avoidance",
+  "description": "适用于无人机高级避障算法测试的复杂环境",
+  "config": {
+    "scenario": {
+      "terrain": "mountainous",
+      "weather": "storm",
+      "obstacles": [
+        "building",
+        "tree",
+        "wind_turbine",
+        "power_line"
+      ]
+    },
+    "physics": {
+      "flight_dynamics": "advanced",
+      "aerodynamics": "detailed",
+      "collision_detection": "enabled"
+    },
+    "reward": {
+      "reward_value": 20,
+      "penalty_rules": [
+        "collision",
+        "out_of_bounds",
+        "timeout"
+      ],
+      "target_threshold": 0.05
+    }
+  }
+}

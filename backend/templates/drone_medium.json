@@ -1,0 +1,29 @@
+{
+  "name": "无人机中等复杂度环境",
+  "type": "drone",
+  "complexity": "medium",
+  "test_type": "environment_adaptation",
+  "config": {
+    "scenario": {
+      "terrain": "urban",
+      "weather": "light_rain",
+      "obstacles": [
+        "building",
+        "lamp_post"
+      ]
+    },
+    "physics": {
+      "flight_dynamics": "medium",
+      "aerodynamics": "medium",
+      "collision_detection": "enabled"
+    },
+    "reward": {
+      "reward_value": 15,
+      "penalty_rules": [
+        "collision",
+        "out_of_bounds"
+      ],
+      "target_threshold": 0.08
+    }
+  }
+}

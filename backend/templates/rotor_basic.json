@@ -1,0 +1,27 @@
+{
+  "name": "旋翼机基础测试环境",
+  "type": "rotor",
+  "complexity": "low",
+  "test_type": "basic_control",
+  "description": "适用于旋翼机基础控制算法测试的简单环境",
+  "config": {
+    "scenario": {
+      "terrain": "flat",
+      "weather": "clear",
+      "obstacles": []
+    },
+    "physics": {
+      "flight_dynamics": "basic",
+      "aerodynamics": "basic",
+      "collision_detection": "enabled"
+    },
+    "reward": {
+      "reward_value": 10,
+      "penalty_rules": [
+        "collision",
+        "out_of_bounds"
+      ],
+      "target_threshold": 0.1
+    }
+  }
+}

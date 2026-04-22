@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(pip install *)",
+      "Bash(curl -s http://127.0.0.1:5000/)",
+      "Bash(curl -s http://127.0.0.1:5000/api/health)",
+      "Bash(curl -s -X POST http://127.0.0.1:5000/api/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
+      "Bash(curl -s -H \"Authorization: Bearer $\\(curl -s -X POST http://127.0.0.1:5000/api/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(git add *)"
+    ]
+  }
+}

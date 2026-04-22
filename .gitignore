@@ -1,0 +1,15 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+.env
+instance/
+.vscode/
+.idea/
+*.log
+*.swp
+.DS_Store
+exports/
+backend/exports/
