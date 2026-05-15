@@ -10,7 +10,7 @@
 
 ### 目录结构
 
-前端和后端位于同一 Git 仓库的两个子目录：`backend/` 和 `frontend/`。docker-compose.yml、README.md 等放在仓库根目录。
+前端和后端位于同一 Git 仓库的两个子目录：`backend/` 和 `frontend/`。README.md 等放在仓库根目录。
 
 ### JSBSim 调用执行策略
 
@@ -41,27 +41,34 @@
 
 ## Phase 1 — 核心基座
 
-### Step 1.1 项目骨架与 Docker 环境
+### Step 1.1 项目骨架与本机开发环境
 
-**目标**：建立前后端目录结构和 Docker Compose 开发环境。
+**目标**：建立前后端目录结构和本机开发环境。
 
 **指令**：
 
 1. 创建 `backend/` 子目录，包含 `app/` 包目录和 `requirements.txt`，内容按 `memory-bank/tech-stack.md` 第 4.2 节的依赖清单填写（含 Celery）
 2. 创建 `frontend/` 子目录，使用 Vite + Vue 3 + TypeScript 模板初始化，安装 `memory-bank/tech-stack.md` 第 4.1 节列出的所有依赖
-3. 创建仓根目录 `docker-compose.yml`，定义 6 个服务：`postgres`（端口 5432，默认数据库 fltect）、`redis`（端口 6379）、`minio`（端口 9000/9001）、`backend`（构建自 `backend/Dockerfile`，映射端口 8000）、`celery_worker`（构建自同一 Dockerfile，启动命令为 Celery worker）、`frontend`（构建自 `frontend/Dockerfile`，映射端口 5173）
-4. 创建 `backend/Dockerfile`：基于 python:3.12-slim，安装依赖。默认启动命令为 Uvicorn 运行 `app.main:app`；Celery worker 通过 docker-compose command 覆盖启动
-5. 创建 `frontend/Dockerfile`：基于 node:20-alpine，安装依赖，启动 Vite dev server
-6. 创建 `backend/app/main.py` 作为 FastAPI 应用入口，只挂载一个 `GET /api/health` 返回 `{"code": 0, "message": "ok"}`
-7. 在 `backend/app/` 下创建 Celery 应用初始化模块，配置 broker 为 Redis，backend 为 Redis
+3. 本机环境要求：
+PostgreSQL：本地安装并运行，端口 5432，创建数据库 fltect
+Redis：本地安装并运行，端口 6379
+MinIO：本地安装并运行，API 端口 9000，Console 端口 9001（可使用 brew install minio/stable/minio 或直接下载二进制文件）
+4. 创建 backend/app/main.py 作为 FastAPI 应用入口，挂载 GET /api/health 返回 {"code": 0, "message": "ok"}
+5. 在 backend/app/ 下创建 Celery 应用初始化模块 celery_app.py，配置 broker 为 Redis（redis://localhost:6379/0），backend 为 Redis（redis://localhost:6379/1）
+6. 创建 backend/run.py 命令启动后端服务，监听端口 8000
+7. 在 frontend 目录下运行 npm run dev 启动前端开发服务器，端口 5173
+8. 创建本机运行脚本start_dev.ps1（Windows），用于同时启动：
+后端：uvicorn app.main:app --reload --port 8000
+Celery Worker：celery -A app.celery_app worker --loglevel=info
+前端：npm run dev
 
 **验证**：
 
-- 执行 `docker-compose up -d`，6 个容器全部状态为 running
-- 访问 `http://localhost:8000/api/health` 返回 `{"code": 0, "message": "ok"}`
-- 访问 `http://localhost:8000/docs` 能看到 Swagger UI
-- 访问 `http://localhost:5173` 能看到 Vue 默认页面
-- `docker-compose logs celery_worker` 显示 Celery worker 就绪，无报错
+- 后端服务启动后，访问 http://localhost:8000/api/health 返回 {"code": 0, "message": "ok"}
+- 访问 http://localhost:8000/docs 能看到 FastAPI 自动生成的 Swagger UI
+- 前端服务启动后，访问 http://localhost:5173 能看到 Vue 默认页面
+- Celery Worker 启动后，终端显示 Connected to redis 和 celery@... ready，无报错
+- PostgreSQL、Redis、MinIO 三个基础服务在本机正常运行（可通过 pg_isready、redis-cli ping、mc admin info 验证）
 
 ---
 
@@ -714,4 +721,4 @@
 
 1. 该 Step 所有"验证"条目全部通过
 2. 前一步的功能未被破坏（无回归）
-3. `docker-compose up` 后全系统可正常启动
+3. 系统可正常启动
