@@ -5,7 +5,8 @@
       <span class="logo-subtitle">飞行试验环境构建系统</span>
     </div>
     <div class="nav-center">
-      <router-link to="/" class="nav-link" :class="{ active: route.path === '/' }">环境管理</router-link>
+      <router-link to="/" class="nav-link" :class="{ active: route.path === '/' || route.path === '/projects' }">项目管理</router-link>
+      <router-link to="/env-generation" class="nav-link" :class="{ active: route.path === '/env-generation' }">环境管理</router-link>
       <router-link to="/monitor" class="nav-link" :class="{ active: route.path === '/monitor' }">训练监控</router-link>
       <router-link to="/optimization" class="nav-link" :class="{ active: route.path === '/optimization' }">优化中心</router-link>
       <router-link to="/models" class="nav-link" :class="{ active: route.path === '/models' }">模型库</router-link>

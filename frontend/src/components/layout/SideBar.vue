@@ -36,11 +36,11 @@
     <div class="sidebar-section">
       <div class="section-label">快捷操作</div>
       <div class="quick-actions">
-        <el-button type="primary" style="width: 100%" @click="$router.push('/env-generation')">
-          <el-icon><Plus /></el-icon> 新建环境
+        <el-button type="primary" style="width: 100%" @click="$router.push('/')">
+          <el-icon><Folder /></el-icon> 新建项目
         </el-button>
-        <el-button style="width: 100%" @click="$router.push('/models')">
-          <el-icon><Upload /></el-icon> 上传模型
+        <el-button style="width: 100%" @click="$router.push('/env-generation')">
+          <el-icon><Plus /></el-icon> 新建环境
         </el-button>
       </div>
     </div>
@@ -65,7 +65,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { Plus, Upload } from '@element-plus/icons-vue'
+import { Plus, Folder } from '@element-plus/icons-vue'
 import { useProjectStore } from '../../stores/project'
 import { getEnvs } from '../../api/envs'
 import StatusTag from '../common/StatusTag.vue'

@@ -13,7 +13,8 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../components/layout/AppLayout.vue'),
     meta: { requiresAuth: true },
     children: [
-      { path: '', name: 'Dashboard', component: () => import('../views/Dashboard.vue') },
+      { path: '', name: 'Projects', component: () => import('../views/Projects.vue') },
+      { path: 'projects', name: 'ProjectsAlias', component: () => import('../views/Projects.vue') },
       { path: 'env-generation', name: 'EnvGeneration', component: () => import('../views/EnvGeneration.vue') },
       { path: 'monitor', name: 'Monitor', component: () => import('../views/Monitor.vue') },
       { path: 'optimization', name: 'Optimization', component: () => import('../views/Optimization.vue') },
