@@ -1,0 +1,16 @@
+Collecting kombu
+  Downloading kombu-5.6.2-py3-none-any.whl.metadata (3.5 kB)
+Collecting amqp<6.0.0,>=5.1.1 (from kombu)
+  Downloading amqp-5.3.1-py3-none-any.whl.metadata (8.9 kB)
+Collecting vine==5.1.0 (from kombu)
+  Downloading vine-5.1.0-py3-none-any.whl.metadata (2.7 kB)
+Collecting tzdata>=2025.2 (from kombu)
+  Downloading tzdata-2026.2-py2.py3-none-any.whl.metadata (1.4 kB)
+Requirement already satisfied: packaging in .\.venv\Lib\site-packages (from kombu) (26.2)
+Downloading kombu-5.6.2-py3-none-any.whl (214 kB)
+Downloading vine-5.1.0-py3-none-any.whl (9.6 kB)
+Downloading amqp-5.3.1-py3-none-any.whl (50 kB)
+Downloading tzdata-2026.2-py2.py3-none-any.whl (349 kB)
+Installing collected packages: vine, tzdata, amqp, kombu
+
+Successfully installed amqp-5.3.1 kombu-5.6.2 tzdata-2026.2 vine-5.1.0
