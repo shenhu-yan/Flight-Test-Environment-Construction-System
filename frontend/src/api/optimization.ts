@@ -10,25 +10,25 @@ export function getEvaluations(envId: string) {
 }
 
 export function createOptimizationTask(projectId: string, data: { param_space: any; weights: any; max_iterations: number }) {
-  return api.post<ApiResponse<OptimizationTask>>(`/projects/${projectId}/optimization/tasks`, data)
+  return api.post<ApiResponse<OptimizationTask>>(`/optimization-tasks`, { ...data, project_id: projectId })
 }
 
 export function getOptimizationTasks(projectId: string) {
-  return api.get<ApiResponse<OptimizationTask[]>>(`/projects/${projectId}/optimization/tasks`)
+  return api.get<ApiResponse<OptimizationTask[]>>(`/optimization-tasks`, { params: { project_id: projectId } })
 }
 
 export function getOptimizationTask(taskId: string) {
-  return api.get<ApiResponse<OptimizationTask>>(`/optimization/tasks/${taskId}`)
+  return api.get<ApiResponse<OptimizationTask>>(`/optimization-tasks/${taskId}`)
 }
 
 export function stopOptimizationTask(taskId: string) {
-  return api.post<ApiResponse<OptimizationTask>>(`/optimization/tasks/${taskId}/stop`)
+  return api.post<ApiResponse<OptimizationTask>>(`/optimization-tasks/${taskId}/start`, { action: 'stop' })
 }
 
 export function getOptimizationReport(taskId: string) {
-  return api.get<ApiResponse<OptimizationReport>>(`/optimization/tasks/${taskId}/report`)
+  return api.get<ApiResponse<OptimizationReport>>(`/optimization-reports/${taskId}`)
 }
 
 export function getOptimizationReports(projectId: string) {
-  return api.get<ApiResponse<OptimizationReport[]>>(`/projects/${projectId}/optimization/reports`)
+  return api.get<ApiResponse<OptimizationReport[]>>(`/optimization-tasks`, { params: { project_id: projectId } })
 }

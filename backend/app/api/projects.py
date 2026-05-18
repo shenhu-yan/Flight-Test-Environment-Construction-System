@@ -2,12 +2,15 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.project import Project
 from app.models.user import User, ProjectRole
+from app.models.env import Env, EnvSnapshot, AdjustmentHistory, TrainingMetric
+from app.models.task import Task
+from app.models.optimization import OptimizationTask
 from app.schemas.common import ResponseModel, PaginatedResponse
 from app.schemas.project import (
     ProjectCreate,
@@ -157,6 +160,16 @@ async def delete_project(
         if role_result.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail="Only project admin can delete")
 
+    # Explicitly delete related records first (SQLite cascade workaround)
+    env_ids = [e.id for e in (await db.execute(select(Env).where(Env.project_id == project_id))).scalars().all()]
+    if env_ids:
+        await db.execute(delete(TrainingMetric).where(TrainingMetric.env_id.in_(env_ids)))
+        await db.execute(delete(EnvSnapshot).where(EnvSnapshot.env_id.in_(env_ids)))
+        await db.execute(delete(AdjustmentHistory).where(AdjustmentHistory.env_id.in_(env_ids)))
+        await db.execute(delete(Env).where(Env.id.in_(env_ids)))
+    await db.execute(delete(Task).where(Task.project_id == project_id))
+    await db.execute(delete(OptimizationTask).where(OptimizationTask.project_id == project_id))
+    await db.execute(delete(ProjectRole).where(ProjectRole.project_id == project_id))
     await db.delete(project)
     await db.commit()
     return ResponseModel(message="Project deleted successfully")

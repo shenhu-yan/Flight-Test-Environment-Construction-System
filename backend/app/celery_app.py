@@ -18,4 +18,13 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
 )
 
+# Try to connect to Redis; if unavailable, use eager mode (synchronous)
+try:
+    import redis
+    r = redis.from_url(settings.CELERY_BROKER_URL, socket_connect_timeout=2)
+    r.ping()
+    celery_app.conf.update(task_always_eager=False)
+except Exception:
+    celery_app.conf.update(task_always_eager=True)
+
 celery_app.autodiscover_tasks(["app.tasks"])

@@ -2,7 +2,7 @@ import api from './index'
 import type { ApiResponse, PaginatedResponse, FlightEnv, EnvConfig, EnvSnapshot, AdjustmentHistory, EnvEvaluation, SceneData } from '../types'
 
 export function getEnvs(projectId: string, params?: { page?: number; page_size?: number; status?: string }) {
-  return api.get<ApiResponse<PaginatedResponse<FlightEnv>>>(`/projects/${projectId}/envs`, { params })
+  return api.get<ApiResponse<PaginatedResponse<FlightEnv>>>(`/envs`, { params: { ...params, project_id: projectId } })
 }
 
 export function getEnv(id: string) {
@@ -10,7 +10,7 @@ export function getEnv(id: string) {
 }
 
 export function createEnv(projectId: string, data: { name: string; config: EnvConfig; template_id?: string; task_id?: string }) {
-  return api.post<ApiResponse<FlightEnv>>(`/projects/${projectId}/envs`, data)
+  return api.post<ApiResponse<FlightEnv>>(`/envs`, { ...data, project_id: projectId })
 }
 
 export function deleteEnv(id: string) {
@@ -18,7 +18,7 @@ export function deleteEnv(id: string) {
 }
 
 export function adjustEnv(id: string, data: { adjustments: Partial<EnvConfig>; reason: string }) {
-  return api.post<ApiResponse<FlightEnv>>(`/envs/${id}/adjust`, data)
+  return api.post<ApiResponse<FlightEnv>>(`/envs/${id}/adjust`, { config: data.adjustments, reason: data.reason })
 }
 
 export function rollbackEnv(id: string, snapshotId: string) {
@@ -40,17 +40,19 @@ export function exportEnv(id: string) {
 export function importEnv(projectId: string, file: File) {
   const formData = new FormData()
   formData.append('file', file)
-  return api.post<ApiResponse<FlightEnv>>(`/projects/${projectId}/envs/import`, formData, {
+  formData.append('project_id', projectId)
+  return api.post<ApiResponse<FlightEnv>>(`/envs/import`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })
 }
 
 export function batchGenerate(projectId: string, data: { count: number; config: EnvConfig }) {
-  return api.post<ApiResponse<FlightEnv[]>>(`/projects/${projectId}/envs/batch`, data)
+  const configs = Array.from({ length: data.count }, () => JSON.parse(JSON.stringify(data.config)))
+  return api.post<ApiResponse<FlightEnv[]>>(`/envs/batch`, { project_id: projectId, configs })
 }
 
 export function generateEnv(projectId: string, data: { name: string; config: EnvConfig; template_id?: string }) {
-  return api.post<ApiResponse<FlightEnv>>(`/projects/${projectId}/envs/generate`, data)
+  return api.post<ApiResponse<FlightEnv>>(`/envs/generate`, { ...data, project_id: projectId })
 }
 
 export function getPreview(envId: string) {
@@ -71,4 +73,9 @@ export function getEnvHistory(envId: string) {
 
 export function updateEnv(id: string, data: Partial<FlightEnv>) {
   return api.put<ApiResponse<FlightEnv>>(`/envs/${id}`, data)
+}
+
+export function batchGenerateEnv(projectId: string, data: { count: number; config: EnvConfig }) {
+  const configs = Array.from({ length: data.count }, () => JSON.parse(JSON.stringify(data.config)))
+  return api.post<ApiResponse<FlightEnv[]>>(`/envs/batch`, { project_id: projectId, configs })
 }

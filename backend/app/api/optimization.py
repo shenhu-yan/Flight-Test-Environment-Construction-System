@@ -33,10 +33,15 @@ async def evaluate_env(
     if env is None:
         raise HTTPException(status_code=404, detail="Environment not found")
 
-    task = evaluate_env_task.delay(env_id)
+    task_id_out = None
+    try:
+        task = evaluate_env_task.delay(env_id)
+        task_id_out = task.id
+    except Exception:
+        pass
     return ResponseModel(
         message="Evaluation started",
-        data={"task_id": task.id, "env_id": env_id},
+        data={"task_id": task_id_out, "env_id": env_id},
     )
 
 
@@ -151,11 +156,33 @@ async def start_optimization(
     if task.status not in ("pending", "failed"):
         raise HTTPException(status_code=400, detail=f"Cannot start task in status '{task.status}'")
 
-    celery_task = run_optimization_task.delay(task_id)
+    celery_task_id = None
+    try:
+        celery_task = run_optimization_task.delay(task_id)
+        celery_task_id = celery_task.id
+    except Exception:
+        pass
     return ResponseModel(
         message="Optimization started",
-        data={"task_id": task_id, "celery_task_id": celery_task.id},
+        data={"task_id": task_id, "celery_task_id": celery_task_id},
     )
+
+
+@router.post("/optimization-tasks/{task_id}/stop", response_model=ResponseModel)
+async def stop_optimization(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    result = await db.execute(select(OptimizationTask).where(OptimizationTask.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Optimization task not found")
+    if task.status not in ("running", "pending"):
+        raise HTTPException(status_code=400, detail=f"Cannot stop task in status '{task.status}'")
+    task.status = "stopped"
+    await db.commit()
+    return ResponseModel(message="Optimization stopped")
 
 
 @router.delete("/optimization-tasks/{task_id}", response_model=ResponseModel)

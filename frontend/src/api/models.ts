@@ -38,7 +38,7 @@ export function uploadModelVersion(modelId: string, file: File, metadata?: any) 
 }
 
 export function diffVersions(modelId: string, version1: string, version2: string) {
-  return api.post<ApiResponse<any>>(`/models/${modelId}/versions/diff`, { version1, version2 })
+  return api.get<ApiResponse<any>>(`/models/${modelId}/diff`, { params: { version1, version2 } })
 }
 
 export function rollbackModel(modelId: string, version: string) {
@@ -46,5 +46,5 @@ export function rollbackModel(modelId: string, version: string) {
 }
 
 export function downloadModelVersion(modelId: string, version: string) {
-  return api.get<ApiResponse<string>>(`/models/${modelId}/versions/${version}/download`)
+  return api.get<ApiResponse<string>>(`/models/${modelId}/download`, { params: { version } })
 }

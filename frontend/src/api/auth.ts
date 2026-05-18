@@ -1,8 +1,8 @@
 import api from './index'
-import type { ApiResponse, User } from '../types'
+import type { ApiResponse, TokenResponse, User } from '../types'
 
 export function login(username: string, password: string) {
- return api.post('/auth/login', { username, password }) // ← JSON格式
+  return api.post<ApiResponse<TokenResponse>>('/auth/login', { username, password })
 }
 
 export function logout() {

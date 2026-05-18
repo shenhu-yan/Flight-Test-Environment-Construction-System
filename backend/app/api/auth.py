@@ -44,3 +44,16 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
 @router.post("/logout", response_model=ResponseModel)
 async def logout(current_user: User = Depends(get_current_user)):
     return ResponseModel(code=0, message="Logout successful", data=None)
+
+
+@router.get("/me", response_model=ResponseModel)
+async def get_me(current_user: User = Depends(get_current_user)):
+    return ResponseModel(
+        code=0,
+        message="success",
+        data={
+            "id": current_user.id,
+            "username": current_user.username,
+            "global_role": current_user.global_role,
+        },
+    )

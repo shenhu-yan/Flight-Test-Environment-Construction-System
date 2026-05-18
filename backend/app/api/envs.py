@@ -297,11 +297,16 @@ async def generate_env(
     env.status = "generating"
     await db.commit()
 
-    task = generate_env_task.delay(env_id)
+    task_id = None
+    try:
+        task = generate_env_task.delay(env_id)
+        task_id = task.id
+    except Exception:
+        pass
 
     return ResponseModel(
         message="Environment generation started",
-        data={"task_id": task.id, "env_id": env_id},
+        data={"task_id": task_id, "env_id": env_id},
     )
 
 
@@ -328,11 +333,17 @@ async def batch_generate(
 
     await db.commit()
 
-    task = batch_generate_envs_task.delay(env_ids)
+    # Celery task (optional — skip if Redis not available)
+    task_id = None
+    try:
+        task = batch_generate_envs_task.delay(env_ids)
+        task_id = task.id
+    except Exception:
+        pass
 
     return ResponseModel(
         message="Batch environment generation started",
-        data={"task_id": task.id, "env_ids": env_ids},
+        data={"task_id": task_id, "env_ids": env_ids},
     )
 
 
@@ -430,3 +441,95 @@ async def get_preview(
 
     scene_data = generate_scene_data(config)
     return ResponseModel(data=scene_data)
+
+
+@router.get("/{env_id}/adjustment-history", response_model=PaginatedResponse)
+async def get_adjustment_history(
+    env_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    offset = (page - 1) * page_size
+    count_result = await db.execute(
+        select(func.count(AdjustmentHistory.id)).where(AdjustmentHistory.env_id == env_id)
+    )
+    total = count_result.scalar()
+    result = await db.execute(
+        select(AdjustmentHistory)
+        .where(AdjustmentHistory.env_id == env_id)
+        .order_by(AdjustmentHistory.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    items = result.scalars().all()
+    return PaginatedResponse(data=[i.__dict__ for i in items], total=total, page=page, page_size=page_size)
+
+
+@router.get("/{env_id}/history", response_model=PaginatedResponse)
+async def get_env_history(
+    env_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    offset = (page - 1) * page_size
+    count_result = await db.execute(
+        select(func.count(AdjustmentHistory.id)).where(AdjustmentHistory.env_id == env_id)
+    )
+    total = count_result.scalar()
+    result = await db.execute(
+        select(AdjustmentHistory)
+        .where(AdjustmentHistory.env_id == env_id)
+        .order_by(AdjustmentHistory.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    items = result.scalars().all()
+    return PaginatedResponse(data=[{k: v for k, v in i.__dict__.items() if k != "env"} for i in items], total=total, page=page, page_size=page_size)
+
+
+@router.get("/{env_id}/metrics", response_model=PaginatedResponse)
+async def get_env_metrics(
+    env_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    offset = (page - 1) * page_size
+    count_result = await db.execute(
+        select(func.count(TrainingMetric.id)).where(TrainingMetric.env_id == env_id)
+    )
+    total = count_result.scalar()
+    result = await db.execute(
+        select(TrainingMetric)
+        .where(TrainingMetric.env_id == env_id)
+        .order_by(TrainingMetric.reported_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    items = result.scalars().all()
+    return PaginatedResponse(data=[{k: v for k, v in i.__dict__.items() if k != "env"} for i in items], total=total, page=page, page_size=page_size)
+
+
+@router.post("/generate", response_model=ResponseModel, status_code=201)
+async def generate_env(
+    request: EnvCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    env = Env(
+        id=str(uuid.uuid4()),
+        project_id=request.project_id,
+        template_id=request.template_id,
+        name=request.name,
+        config=request.config.model_dump() if request.config else {},
+        created_by=current_user.id,
+    )
+    db.add(env)
+    await db.commit()
+    await db.refresh(env)
+    return ResponseModel(data=EnvResponse.model_validate(env))

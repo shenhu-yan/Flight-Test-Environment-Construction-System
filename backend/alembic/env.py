@@ -8,7 +8,7 @@ from sqlalchemy import text
 from alembic import context
 
 from app.config import settings
-from app.models.base import Base
+from app.database import Base
 
 import app.models  # noqa: F401
 
