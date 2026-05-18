@@ -42,6 +42,8 @@ async def lifespan(app: FastAPI):
             access_key=settings.MINIO_ACCESS_KEY,
             secret_key=settings.MINIO_SECRET_KEY,
             secure=settings.MINIO_SECURE,
+            region="us-east-1",  # 添加这行
+
         )
         if not minio_client.bucket_exists(settings.BUCKET_NAME):
             minio_client.make_bucket(settings.BUCKET_NAME)

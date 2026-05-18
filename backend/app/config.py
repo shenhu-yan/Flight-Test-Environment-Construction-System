@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     BUCKET_NAME: str = "fltect"
 
     class Config:
-        env_file = ".env.local"
+        env_file = ".env"
         env_file_encoding = "utf-8"
 
 
