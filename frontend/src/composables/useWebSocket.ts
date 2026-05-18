@@ -5,10 +5,10 @@ export function useWebSocket(url: string, onMessage: (data: any) => void) {
   let ws: WebSocket | null = null
   let reconnectTimer: number | null = null
   let heartbeatTimer: number | null = null
-  
+
   function connect() {
-    const token = localStorage.getItem('token')
-    ws = new WebSocket(`${url}?token=${token}`)
+    // URL already contains token from getWsUrl, do NOT append another ?token=
+    ws = new WebSocket(url)
     
     ws.onopen = () => {
       connected.value = true

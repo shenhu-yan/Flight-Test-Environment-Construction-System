@@ -138,7 +138,12 @@ const adjustForm = reactive({
   reason: ''
 })
 
-const { connected, send } = useWebSocket(getWsUrl('/ws/frontend'), (data) => {
+const wsUrl = computed(() => {
+  const pid = projectStore.currentProject?.id || 'default'
+  return getWsUrl('/ws/frontend', { project_id: pid })
+})
+
+const { connected, send } = useWebSocket(wsUrl.value, (data) => {
   if (data.type === 'metric' && selectedEnv.value && data.env_id === selectedEnv.value.id) {
     metrics.value.push(data as TrainingMetric)
     if (metrics.value.length > 300) metrics.value.shift()

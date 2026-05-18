@@ -45,20 +45,16 @@ async function checkNewNotifications() {
       })
     }
     lastNotifCount = total
-  } catch {}
+    wsConnected.value = true
+  } catch {
+    wsConnected.value = false
+  }
 }
 
 onMounted(() => {
   authStore.fetchUser()
 
-  // WebSocket connection for status
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(`${protocol}//${window.location.host}/ws/notifications`)
-  ws.onopen = () => { wsConnected.value = true }
-  ws.onclose = () => { wsConnected.value = false }
-  ws.onerror = () => { wsConnected.value = false }
-
-  // Poll notifications
+  // Use HTTP polling for connection status (no /ws/notifications endpoint exists)
   checkNewNotifications()
   pollTimer = window.setInterval(checkNewNotifications, 60000)
 })
