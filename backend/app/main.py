@@ -129,3 +129,11 @@ async def health():
         "version": "2.0.0",
         "ws_stats": manager.stats,
     }
+
+@app.get("/api/auth/me")
+async def get_me(current_user = Depends(get_current_user)):
+ return {
+ "id": current_user.id,
+ "username": current_user.username,
+ "global_role": current_user.global_role,
+ }

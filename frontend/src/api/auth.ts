@@ -1,13 +1,8 @@
 import api from './index'
-import type { ApiResponse, TokenResponse, User } from '../types'
+import type { ApiResponse, User } from '../types'
 
 export function login(username: string, password: string) {
-  const formData = new URLSearchParams()
-  formData.append('username', username)
-  formData.append('password', password)
-  return api.post<ApiResponse<TokenResponse>>('/auth/login', formData, {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-  })
+ return api.post('/auth/login', { username, password }) // ← JSON格式
 }
 
 export function logout() {
