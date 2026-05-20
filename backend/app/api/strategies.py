@@ -1,114 +1,114 @@
 import uuid
-
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+import json
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
-from app.database import get_db
-from app.models.env import StrategyRule
-from app.models.user import User
-from app.schemas.common import ResponseModel
-from app.schemas.strategy import StrategyRuleCreate, StrategyRuleUpdate, StrategyRuleResponse
-from app.core.deps import get_current_active_user
+from app.core.database import get_db
+from app.core.security import get_current_user, require_admin
 
-router = APIRouter(prefix="/strategies", tags=["strategies"])
+router = APIRouter()
 
 
-@router.get("", response_model=ResponseModel[list[StrategyRuleResponse]])
-async def list_strategies(
-    project_id: str | None = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+@router.get("")
+async def get_strategies(
+    project_id: str = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    stmt = select(StrategyRule).order_by(StrategyRule.priority.desc())
+    query = "SELECT id, name, condition, action, priority, enabled, project_id, created_at FROM strategies WHERE 1=1"
+    params = {}
+
     if project_id:
-        stmt = stmt.where(
-            (StrategyRule.project_id == project_id) | (StrategyRule.project_id.is_(None))
-        )
-    else:
-        stmt = stmt.where(StrategyRule.project_id.is_(None))
+        query += " AND (project_id = :project_id OR project_id IS NULL)"
+        params["project_id"] = project_id
 
-    result = await db.execute(stmt)
-    rules = result.scalars().all()
+    query += " ORDER BY priority ASC"
 
-    return ResponseModel(
-        data=[StrategyRuleResponse.model_validate(r) for r in rules]
-    )
+    result = await db.execute(text(query), params)
+    strategies = result.fetchall()
+    return {
+        "code": 0,
+        "data": [
+            {
+                "id": s[0],
+                "name": s[1],
+                "condition": json.loads(s[2]) if isinstance(s[2], str) else s[2],
+                "action": json.loads(s[3]) if isinstance(s[3], str) else s[3],
+                "priority": s[4],
+                "enabled": s[5],
+                "project_id": s[6],
+                "created_at": str(s[7]) if s[7] else None,
+            }
+            for s in strategies
+        ]
+    }
 
 
-@router.post("", response_model=ResponseModel[StrategyRuleResponse], status_code=201)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_strategy(
-    request: StrategyRuleCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    strategy_data: dict,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
 ):
-    rule = StrategyRule(
-        id=str(uuid.uuid4()),
-        project_id=request.project_id,
-        name=request.name,
-        condition_config=request.condition_config,
-        action_config=request.action_config,
-        priority=request.priority,
-        enabled=request.enabled,
+    strategy_id = str(uuid.uuid4())
+    await db.execute(
+        text(
+            """
+            INSERT INTO strategies (id, name, condition, action, priority, enabled, project_id, created_at)
+            VALUES (:id, :name, :condition, :action, :priority, :enabled, :project_id, NOW())
+            """
+        ),
+        {
+            "id": strategy_id,
+            "name": strategy_data.get("name"),
+            "condition": json.dumps(strategy_data.get("condition")),
+            "action": json.dumps(strategy_data.get("action")),
+            "priority": strategy_data.get("priority", 0),
+            "enabled": strategy_data.get("enabled", True),
+            "project_id": strategy_data.get("project_id"),
+        }
     )
-    db.add(rule)
-    await db.commit()
-    await db.refresh(rule)
-    return ResponseModel(data=StrategyRuleResponse.model_validate(rule))
+
+    return {"code": 0, "data": {"id": strategy_id, "name": strategy_data.get("name")}}
 
 
-@router.get("/{rule_id}", response_model=ResponseModel[StrategyRuleResponse])
-async def get_strategy(
-    rule_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    result = await db.execute(select(StrategyRule).where(StrategyRule.id == rule_id))
-    rule = result.scalar_one_or_none()
-    if rule is None:
-        raise HTTPException(status_code=404, detail="Strategy rule not found")
-    return ResponseModel(data=StrategyRuleResponse.model_validate(rule))
-
-
-@router.put("/{rule_id}", response_model=ResponseModel[StrategyRuleResponse])
+@router.put("/{strategy_id}")
 async def update_strategy(
-    rule_id: str,
-    request: StrategyRuleUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    strategy_id: str,
+    strategy_data: dict,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(StrategyRule).where(StrategyRule.id == rule_id))
-    rule = result.scalar_one_or_none()
-    if rule is None:
-        raise HTTPException(status_code=404, detail="Strategy rule not found")
+    result = await db.execute(
+        text("SELECT id FROM strategies WHERE id = :id"),
+        {"id": strategy_id}
+    )
+    if not result.fetchone():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strategy not found")
 
-    if request.name is not None:
-        rule.name = request.name
-    if request.condition_config is not None:
-        rule.condition_config = request.condition_config
-    if request.action_config is not None:
-        rule.action_config = request.action_config
-    if request.priority is not None:
-        rule.priority = request.priority
-    if request.enabled is not None:
-        rule.enabled = request.enabled
+    updates = []
+    params = {"id": strategy_id}
+    if "name" in strategy_data:
+        updates.append("name = :name")
+        params["name"] = strategy_data["name"]
+    if "condition" in strategy_data:
+        updates.append("condition = :condition")
+        params["condition"] = json.dumps(strategy_data["condition"])
+    if "action" in strategy_data:
+        updates.append("action = :action")
+        params["action"] = json.dumps(strategy_data["action"])
+    if "priority" in strategy_data:
+        updates.append("priority = :priority")
+        params["priority"] = strategy_data["priority"]
+    if "enabled" in strategy_data:
+        updates.append("enabled = :enabled")
+        params["enabled"] = strategy_data["enabled"]
 
-    await db.commit()
-    await db.refresh(rule)
-    return ResponseModel(data=StrategyRuleResponse.model_validate(rule))
+    if updates:
+        await db.execute(
+            text(f"UPDATE strategies SET {', '.join(updates)}, updated_at = NOW() WHERE id = :id"),
+            params
+        )
 
-
-@router.delete("/{rule_id}", response_model=ResponseModel)
-async def delete_strategy(
-    rule_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    result = await db.execute(select(StrategyRule).where(StrategyRule.id == rule_id))
-    rule = result.scalar_one_or_none()
-    if rule is None:
-        raise HTTPException(status_code=404, detail="Strategy rule not found")
-
-    await db.delete(rule)
-    await db.commit()
-    return ResponseModel(message="Strategy rule deleted successfully")
+    return {"code": 0, "message": "Strategy updated successfully"}

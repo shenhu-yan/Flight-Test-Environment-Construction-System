@@ -1,114 +1,64 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
+from enum import Enum
+
+
+class TerrainType(str, Enum):
+    FLAT = "flat"
+    HILLY = "hilly"
+    MOUNTAINOUS = "mountainous"
 
 
 class TerrainConfig(BaseModel):
-    type: str = "mountain"
-    elevation_min: float = 0.0
-    elevation_max: float = 3000.0
-    resolution: float = 1.0
-
-    @field_validator("elevation_min")
-    @classmethod
-    def validate_elevation_min(cls, v: float) -> float:
-        if v < 0 or v > 10000:
-            raise ValueError("elevation_min must be between 0 and 10000")
-        return v
-
-    @field_validator("elevation_max")
-    @classmethod
-    def validate_elevation_max(cls, v: float) -> float:
-        if v < 0 or v > 10000:
-            raise ValueError("elevation_max must be between 0 and 10000")
-        return v
-
-    @field_validator("resolution")
-    @classmethod
-    def validate_resolution(cls, v: float) -> float:
-        if v < 0.1 or v > 100:
-            raise ValueError("resolution must be between 0.1 and 100")
-        return v
+    type: TerrainType = TerrainType.FLAT
+    elevation_min: float = Field(0, ge=-1000, le=10000)
+    elevation_max: float = Field(100, ge=0, le=20000)
+    resolution: float = Field(1.0, ge=0.1, le=10.0)
 
 
-class WeatherConfig(BaseModel):
-    wind_speed: float = 5.0
-    wind_direction: float = 0.0
-    visibility: float = 10000.0
-
-    @field_validator("wind_speed")
-    @classmethod
-    def validate_wind_speed(cls, v: float) -> float:
-        if v < 0 or v > 50:
-            raise ValueError("wind_speed must be between 0 and 50")
-        return v
-
-    @field_validator("wind_direction")
-    @classmethod
-    def validate_wind_direction(cls, v: float) -> float:
-        if v < 0 or v > 360:
-            raise ValueError("wind_direction must be between 0 and 360")
-        return v
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: float) -> float:
-        if v < 0 or v > 50000:
-            raise ValueError("visibility must be between 0 and 50000")
-        return v
+class AtmosphereConfig(BaseModel):
+    wind_speed: float = Field(5.0, ge=0, le=50)
+    wind_direction: float = Field(90, ge=0, le=360)
+    visibility: float = Field(10000, ge=100, le=100000)
 
 
-class FlightDynamicsConfig(BaseModel):
-    aircraft_model: str = "c172p"
-    mass: float = 1000.0
-    wingspan: float = 11.0
+class AircraftConfig(BaseModel):
+    model: str = "c172x"
+    mass: float = Field(1043, ge=100, le=100000)
+    wingspan: float = Field(11.0, ge=1, le=100)
 
 
 class RewardItem(BaseModel):
     name: str
-    coefficient: float = 1.0
+    coefficient: float = Field(1.0, ge=-100, le=100)
+
+
+class PenaltyItem(BaseModel):
+    name: str
+    coefficient: float = Field(-1.0, le=0, ge=-100)
 
 
 class RewardConfig(BaseModel):
-    reward_items: list[RewardItem] = []
-    penalty_items: list[RewardItem] = []
+    items: List[RewardItem] = []
+    penalties: List[PenaltyItem] = []
 
 
 class ObstacleConfig(BaseModel):
-    count: int = 0
-    types: list[str] = []
-    density: float = 0.0
-
-    @field_validator("count")
-    @classmethod
-    def validate_count(cls, v: int) -> int:
-        if v < 0 or v > 100:
-            raise ValueError("count must be between 0 and 100")
-        return v
-
-    @field_validator("density")
-    @classmethod
-    def validate_density(cls, v: float) -> float:
-        if v < 0 or v > 1:
-            raise ValueError("density must be between 0 and 1")
-        return v
+    count: int = Field(0, ge=0, le=100)
+    types: List[str] = []
+    density: float = Field(0.0, ge=0, le=1.0)
 
 
-class Waypoint(BaseModel):
+class WaypointConfig(BaseModel):
     id: str
-    position: list[float]
-    order: int = 0
-
-    @field_validator("position")
-    @classmethod
-    def validate_position(cls, v: list[float]) -> list[float]:
-        if len(v) != 3:
-            raise ValueError("position must have exactly 3 elements [x, y, z]")
-        return v
+    position: List[float] = Field(..., min_length=3, max_length=3)
+    order: int
 
 
 class EnvConfig(BaseModel):
     terrain: TerrainConfig = TerrainConfig()
-    weather: WeatherConfig = WeatherConfig()
-    flight_dynamics: FlightDynamicsConfig = FlightDynamicsConfig()
-    rewards: RewardConfig = RewardConfig()
+    atmosphere: AtmosphereConfig = AtmosphereConfig()
+    aircraft: AircraftConfig = AircraftConfig()
+    reward: RewardConfig = RewardConfig()
     obstacles: ObstacleConfig = ObstacleConfig()
-    waypoints: list[Waypoint] = []
+    waypoints: List[WaypointConfig] = []

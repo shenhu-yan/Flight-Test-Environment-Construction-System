@@ -1,26 +1,24 @@
-import logging
+from sqlalchemy import text
+from app.core.database import async_session
+from passlib.context import CryptContext
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.user import User
-from app.services.security import hash_password
-
-logger = logging.getLogger(__name__)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-async def seed_users(db: AsyncSession):
-    result = await db.execute(select(User).where(User.username == "admin"))
-    existing = result.scalar_one_or_none()
-    if existing is not None:
-        logger.info("Admin user already exists, skipping seed")
-        return
-
-    admin_user = User(
-        username="admin",
-        password_hash=hash_password("admin123"),
-        global_role="admin",
-    )
-    db.add(admin_user)
-    await db.commit()
-    logger.info("Admin user seeded successfully (username: admin, password: admin123)")
+async def seed_default_admin():
+    async with async_session() as session:
+        result = await session.execute(
+            text("SELECT id FROM users WHERE username = 'admin'")
+        )
+        if result.fetchone() is None:
+            hashed_password = pwd_context.hash("admin123")
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO users (id, username, password_hash, global_role, created_at)
+                    VALUES ('00000000-0000-0000-0000-000000000001', 'admin', :password_hash, 'admin', NOW())
+                    """
+                ),
+                {"password_hash": hashed_password},
+            )
+            await session.commit()

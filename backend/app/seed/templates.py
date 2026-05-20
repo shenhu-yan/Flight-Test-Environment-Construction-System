@@ -1,189 +1,76 @@
-import logging
+import json
+from datetime import datetime
+from sqlalchemy import text
+from app.core.database import async_session
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.template import Template
-
-logger = logging.getLogger(__name__)
-
-
-BASIC_TEMPLATE_CONFIG = {
-    "terrain": {
-        "type": "plains",
-        "elevation_min": 0,
-        "elevation_max": 500,
-        "resolution": 5.0,
-    },
-    "weather": {
-        "wind_speed": 3,
-        "wind_direction": 0,
-        "visibility": 15000,
-    },
-    "flight_dynamics": {
-        "aircraft_model": "c172p",
-        "mass": 1000,
-        "wingspan": 11,
-    },
-    "rewards": {
-        "reward_items": [
-            {"name": "altitude_maintenance", "coefficient": 1.0},
-            {"name": "waypoint_reached", "coefficient": 5.0},
-            {"name": "fuel_efficiency", "coefficient": 0.5},
-        ],
-        "penalty_items": [
-            {"name": "altitude_violation", "coefficient": -2.0},
-            {"name": "overspeed", "coefficient": -3.0},
-        ],
-    },
-    "obstacles": {
-        "count": 5,
-        "types": ["building", "tower"],
-        "density": 0.1,
-    },
-    "waypoints": [
-        {"id": "wp1", "position": [1000, 0, 300], "order": 1},
-        {"id": "wp2", "position": [2000, 500, 300], "order": 2},
-        {"id": "wp3", "position": [3000, 0, 300], "order": 3},
-    ],
-}
-
-MEDIUM_TEMPLATE_CONFIG = {
-    "terrain": {
-        "type": "hills",
-        "elevation_min": 0,
-        "elevation_max": 2000,
-        "resolution": 2.0,
-    },
-    "weather": {
-        "wind_speed": 10,
-        "wind_direction": 45,
-        "visibility": 10000,
-    },
-    "flight_dynamics": {
-        "aircraft_model": "c172p",
-        "mass": 1000,
-        "wingspan": 11,
-    },
-    "rewards": {
-        "reward_items": [
-            {"name": "altitude_maintenance", "coefficient": 1.0},
-            {"name": "waypoint_reached", "coefficient": 8.0},
-            {"name": "fuel_efficiency", "coefficient": 0.8},
-            {"name": "smooth_flight", "coefficient": 0.5},
-        ],
-        "penalty_items": [
-            {"name": "altitude_violation", "coefficient": -5.0},
-            {"name": "overspeed", "coefficient": -5.0},
-            {"name": "collision_risk", "coefficient": -10.0},
-        ],
-    },
-    "obstacles": {
-        "count": 15,
-        "types": ["building", "tower", "mountain_peak"],
-        "density": 0.3,
-    },
-    "waypoints": [
-        {"id": "wp1", "position": [500, 200, 500], "order": 1},
-        {"id": "wp2", "position": [1500, -300, 800], "order": 2},
-        {"id": "wp3", "position": [2500, 400, 600], "order": 3},
-        {"id": "wp4", "position": [3500, -200, 700], "order": 4},
-        {"id": "wp5", "position": [4500, 0, 500], "order": 5},
-    ],
-}
-
-HARD_TEMPLATE_CONFIG = {
-    "terrain": {
-        "type": "mountain",
-        "elevation_min": 0,
-        "elevation_max": 5000,
-        "resolution": 1.0,
-    },
-    "weather": {
-        "wind_speed": 25,
-        "wind_direction": 180,
-        "visibility": 5000,
-    },
-    "flight_dynamics": {
-        "aircraft_model": "c172p",
-        "mass": 1000,
-        "wingspan": 11,
-    },
-    "rewards": {
-        "reward_items": [
-            {"name": "altitude_maintenance", "coefficient": 1.5},
-            {"name": "waypoint_reached", "coefficient": 15.0},
-            {"name": "fuel_efficiency", "coefficient": 1.0},
-            {"name": "smooth_flight", "coefficient": 1.0},
-            {"name": "terrain_following", "coefficient": 2.0},
-        ],
-        "penalty_items": [
-            {"name": "altitude_violation", "coefficient": -10.0},
-            {"name": "overspeed", "coefficient": -8.0},
-            {"name": "collision_risk", "coefficient": -20.0},
-            {"name": "terrain_collision", "coefficient": -50.0},
-        ],
-    },
-    "obstacles": {
-        "count": 40,
-        "types": ["building", "tower", "mountain_peak", "power_line", "antenna"],
-        "density": 0.7,
-    },
-    "waypoints": [
-        {"id": "wp1", "position": [300, 500, 1000], "order": 1},
-        {"id": "wp2", "position": [1000, -800, 1500], "order": 2},
-        {"id": "wp3", "position": [2000, 600, 800], "order": 3},
-        {"id": "wp4", "position": [2800, -400, 2000], "order": 4},
-        {"id": "wp5", "position": [3500, 200, 1200], "order": 5},
-        {"id": "wp6", "position": [4200, -600, 1800], "order": 6},
-        {"id": "wp7", "position": [5000, 0, 1000], "order": 7},
-    ],
-}
-
-TEMPLATES_DATA = [
+BUILTIN_TEMPLATES = [
     {
-        "name": "Fixed Wing Basic",
+        "id": "00000000-0000-0000-0000-000000000001",
+        "name": "固定翼基础难度",
         "aircraft_type": "fixed_wing",
         "difficulty": "basic",
-        "config": BASIC_TEMPLATE_CONFIG,
+        "config": {
+            "terrain": {"type": "flat", "elevation_min": 0, "elevation_max": 100, "resolution": 1.0},
+            "atmosphere": {"wind_speed": 5.0, "wind_direction": 90, "visibility": 10000},
+            "aircraft": {"model": "c172x", "mass": 1043, "wingspan": 11.0},
+            "reward": {"items": [{"name": "altitude_reward", "coefficient": 1.0}], "penalties": []},
+            "obstacles": {"count": 0, "types": [], "density": 0.0},
+            "waypoints": []
+        }
     },
     {
-        "name": "Fixed Wing Medium",
+        "id": "00000000-0000-0000-0000-000000000002",
+        "name": "固定翼中等难度",
         "aircraft_type": "fixed_wing",
         "difficulty": "medium",
-        "config": MEDIUM_TEMPLATE_CONFIG,
+        "config": {
+            "terrain": {"type": "hilly", "elevation_min": 0, "elevation_max": 500, "resolution": 1.0},
+            "atmosphere": {"wind_speed": 10.0, "wind_direction": 180, "visibility": 8000},
+            "aircraft": {"model": "c172x", "mass": 1043, "wingspan": 11.0},
+            "reward": {"items": [{"name": "altitude_reward", "coefficient": 1.0}, {"name": "speed_reward", "coefficient": 0.5}], "penalties": [{"name": "collision_penalty", "coefficient": -10.0}]},
+            "obstacles": {"count": 5, "types": ["building"], "density": 0.1},
+            "waypoints": [{"id": "wp1", "position": [0, 0, 100], "order": 1}, {"id": "wp2", "position": [500, 0, 200], "order": 2}]
+        }
     },
     {
-        "name": "Fixed Wing Hard",
+        "id": "00000000-0000-0000-0000-000000000003",
+        "name": "固定翼高难度",
         "aircraft_type": "fixed_wing",
         "difficulty": "hard",
-        "config": HARD_TEMPLATE_CONFIG,
-    },
+        "config": {
+            "terrain": {"type": "mountainous", "elevation_min": 0, "elevation_max": 1000, "resolution": 0.5},
+            "atmosphere": {"wind_speed": 20.0, "wind_direction": 270, "visibility": 5000},
+            "aircraft": {"model": "f16", "mass": 9072, "wingspan": 10.0},
+            "reward": {"items": [{"name": "altitude_reward", "coefficient": 1.0}, {"name": "speed_reward", "coefficient": 1.0}, {"name": "fuel_efficiency", "coefficient": 0.3}], "penalties": [{"name": "collision_penalty", "coefficient": -50.0}, {"name": "stall_penalty", "coefficient": -20.0}]},
+            "obstacles": {"count": 15, "types": ["building", "mountain"], "density": 0.3},
+            "waypoints": [{"id": "wp1", "position": [0, 0, 100], "order": 1}, {"id": "wp2", "position": [300, 200, 300], "order": 2}, {"id": "wp3", "position": [600, -100, 500], "order": 3}]
+        }
+    }
 ]
 
 
-async def seed_templates(db: AsyncSession):
-    for template_data in TEMPLATES_DATA:
-        result = await db.execute(
-            select(Template).where(
-                Template.name == template_data["name"],
-                Template.is_builtin == True,
-            )
+async def seed_builtin_templates():
+    async with async_session() as session:
+        result = await session.execute(
+            text("SELECT id FROM templates WHERE is_builtin = true LIMIT 1")
         )
-        existing = result.scalar_one_or_none()
-        if existing is not None:
-            continue
-
-        template = Template(
-            name=template_data["name"],
-            aircraft_type=template_data["aircraft_type"],
-            difficulty=template_data["difficulty"],
-            config=template_data["config"],
-            is_builtin=True,
-            created_by=None,
-        )
-        db.add(template)
-        logger.info(f"Seeded template: {template_data['name']}")
-
-    await db.commit()
-    logger.info("Templates seeding completed")
+        if result.fetchone() is None:
+            now = datetime.utcnow()
+            for template in BUILTIN_TEMPLATES:
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO templates (id, name, aircraft_type, difficulty, config, is_builtin, created_at)
+                        VALUES (:id, :name, :aircraft_type, :difficulty, :config, true, :now)
+                        """
+                    ),
+                    {
+                        "id": template["id"],
+                        "name": template["name"],
+                        "aircraft_type": template["aircraft_type"],
+                        "difficulty": template["difficulty"],
+                        "config": json.dumps(template["config"]),
+                        "now": now,
+                    },
+                )
+            await session.commit()

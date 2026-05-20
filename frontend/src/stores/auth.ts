@@ -1,38 +1,47 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { login as apiLogin, logout as apiLogout, getCurrentUser } from '../api/auth'
-import type { User } from '../types'
-import router from '../router'
+import { ref, computed } from 'vue'
+import api from '@/api'
+
+interface User {
+  id: string
+  username: string
+  global_role: string
+}
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref<string>(localStorage.getItem('token') || '')
+  const token = ref<string | null>(localStorage.getItem('token'))
   const user = ref<User | null>(null)
 
+  const isAuthenticated = computed(() => !!token.value)
+
   async function login(username: string, password: string) {
-    const res = await apiLogin(username, password)
-    const data = res.data.data || res.data
-    token.value = data.access_token
-    localStorage.setItem('token', data.access_token)
+    const response = await api.post('/api/auth/login', { username, password })
+    token.value = response.data.access_token
+    localStorage.setItem('token', response.data.access_token)
     await fetchUser()
-    router.push('/')
   }
 
   async function fetchUser() {
     try {
-      const res = await getCurrentUser()
-      user.value = res.data.data || res.data
-    } catch {
-      user.value = null
+      const response = await api.get('/api/auth/me')
+      user.value = response.data.data
+    } catch (error) {
+      logout()
     }
   }
 
-  async function logout() {
-    try { await apiLogout() } catch {}
-    token.value = ''
+  function logout() {
+    token.value = null
     user.value = null
     localStorage.removeItem('token')
-    router.push('/login')
   }
 
-  return { token, user, login, logout, fetchUser }
+  return {
+    token,
+    user,
+    isAuthenticated,
+    login,
+    fetchUser,
+    logout
+  }
 })

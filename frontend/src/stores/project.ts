@@ -1,30 +1,51 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { getProjects } from '../api/projects'
-import type { Project } from '../types'
+import api from '@/api'
+
+interface Project {
+  id: string
+  name: string
+  description?: string
+  created_by?: string
+  created_at?: string
+}
 
 export const useProjectStore = defineStore('project', () => {
-  const currentProject = ref<Project | null>(null)
   const projects = ref<Project[]>([])
+  const currentProject = ref<Project | null>(null)
 
   async function fetchProjects() {
-    const res = await getProjects({ page: 1, page_size: 100 })
-    const data = res.data.data
-    projects.value = Array.isArray(data) ? data : (data?.data || [])
-  }
-
-  function switchProject(project: Project) {
-    currentProject.value = project
-    localStorage.setItem('currentProjectId', project.id)
-  }
-
-  function initFromStorage() {
-    const id = localStorage.getItem('currentProjectId')
-    if (id && projects.value.length) {
-      const found = projects.value.find(p => p.id === id)
-      if (found) currentProject.value = found
+    const response = await api.get('/api/projects')
+    projects.value = response.data.data
+    if (projects.value.length > 0 && !currentProject.value) {
+      currentProject.value = projects.value[0]
     }
   }
 
-  return { currentProject, projects, fetchProjects, switchProject, initFromStorage }
+  async function createProject(name: string, description?: string) {
+    const response = await api.post('/api/projects', { name, description })
+    await fetchProjects()
+    return response.data.data
+  }
+
+  async function deleteProject(projectId: string) {
+    await api.delete(`/api/projects/${projectId}`)
+    if (currentProject.value?.id === projectId) {
+      currentProject.value = null
+    }
+    await fetchProjects()
+  }
+
+  function setCurrentProject(project: Project) {
+    currentProject.value = project
+  }
+
+  return {
+    projects,
+    currentProject,
+    fetchProjects,
+    createProject,
+    deleteProject,
+    setCurrentProject
+  }
 })

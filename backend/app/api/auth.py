@@ -1,59 +1,38 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
-from app.database import get_db
-from app.models.user import User
-from app.schemas.common import ResponseModel, TokenResponse
-from app.schemas.user import LoginRequest
-from app.services.security import (
-    create_access_token,
-    verify_password,
-    get_current_user,
-)
+from app.core.database import get_db
+from app.core.security import verify_password, create_access_token, get_current_user
+from app.schemas.auth import LoginRequest, TokenResponse
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter()
 
 
-@router.post("/login", response_model=ResponseModel[TokenResponse])
+@router.post("/login", response_model=TokenResponse)
 async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.username == request.username))
-    user = result.scalar_one_or_none()
+    result = await db.execute(
+        text("SELECT id, username, password_hash, global_role FROM users WHERE username = :username"),
+        {"username": request.username}
+    )
+    user = result.fetchone()
 
-    if user is None:
+    if not user or not verify_password(request.password, user[2]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if not verify_password(request.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
-        )
-
-    access_token = create_access_token(data={"sub": user.id, "username": user.username, "role": user.global_role})
-
-    return ResponseModel(
-        code=0,
-        message="Login successful",
-        data=TokenResponse(access_token=access_token),
-    )
+    access_token = create_access_token(data={"sub": user[1], "role": user[3]})
+    return TokenResponse(access_token=access_token)
 
 
-@router.post("/logout", response_model=ResponseModel)
-async def logout(current_user: User = Depends(get_current_user)):
-    return ResponseModel(code=0, message="Logout successful", data=None)
+@router.post("/logout")
+async def logout(current_user: dict = Depends(get_current_user)):
+    return {"code": 0, "message": "Logged out successfully"}
 
 
-@router.get("/me", response_model=ResponseModel)
-async def get_me(current_user: User = Depends(get_current_user)):
-    return ResponseModel(
-        code=0,
-        message="success",
-        data={
-            "id": current_user.id,
-            "username": current_user.username,
-            "global_role": current_user.global_role,
-        },
-    )
+@router.get("/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    return {"code": 0, "data": current_user}

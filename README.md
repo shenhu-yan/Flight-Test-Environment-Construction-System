@@ -1,238 +1,163 @@
-# 飞行试验管理系统
+# 飞行试验环境构建系统
 
-> Flight Test System — 用于管理和跟踪飞行试验全流程的 Web 应用系统。
+基于强化学习的飞行试验环境构建系统（B/S 架构）。根据用户需求自动生成 Gymnasium 兼容的飞行试验环境，支持动态调整和智能优化。
 
-## 项目概述
+## 功能特性
 
-本系统提供飞行试验数据管理、任务调度、报告生成等功能，采用前后端分离架构，支持 Docker 一键部署。
+| 模块 | 功能 |
+|------|------|
+| 环境管理 | 创建/编辑/删除环境，3D 预览，导入/导出 |
+| 训练监控 | 实时训练指标曲线，WebSocket 实时推送 |
+| 优化中心 | 四维质量评估（多样性/挑战性/真实性/有效性），贝叶斯优化 |
+| 模型管理 | 上传/版本管理/下载，三级权限控制 |
+| 用户管理 | 用户 CRUD，角色分配，密码重置 |
+| 项目管理 | 项目创建/删除，成员管理，权限控制 |
 
 ## 技术栈
 
-| 层级 | 技术 |
-|------|------|
-| **前端** | Vue 3 + TypeScript + Vite + Ant Design Vue |
-| **后端** | Python 3.11 + FastAPI + SQLAlchemy + Celery |
-| **数据库** | PostgreSQL 14 |
-| **缓存/消息** | Redis 7 |
-| **对象存储** | MinIO (S3 兼容) |
-| **反向代理** | Nginx |
-| **容器化** | Docker + Docker Compose |
+- **前端**：Vue 3 + TypeScript + Element Plus + Three.js + ECharts
+- **后端**：FastAPI + SQLAlchemy + Celery + Redis
+- **数据库**：PostgreSQL 15 + MinIO（文件存储）
 
-## 前置要求
-
-### 开发环境
-- Python 3.11+
-- Node.js 18+
-- PostgreSQL 14+ (本地运行或 Docker)
-- Redis 7+ (本地运行或 Docker)
-- MinIO (可选，用于文件存储)
-
-### Docker 部署
-- Docker 20.10+
-- Docker Compose v2+
+---
 
 ## 快速开始
 
-### 开发模式
+### 方式一：Docker 一键部署（推荐）
 
-1. **克隆项目**
-
-```bash
-git clone <repository-url>
-cd flight-test-system
-```
-
-2. **配置环境变量**
+**前提条件**：安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
 ```bash
-cp .env.example .env
-# 编辑 .env 文件，修改数据库、Redis 等连接信息
-```
-
-3. **启动后端**
-
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-4. **启动前端**
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-5. **启动 Celery Worker（可选）**
-
-```bash
-cd backend
-celery -A app.celery_app worker -l info
-```
-
-6. **一键启动（推荐）**
-
-```bash
-# PowerShell
-.\start_dev.ps1
-
-# Bash
-bash start_dev.sh
-```
-
-### Docker 部署
-
-1. **配置环境变量**
-
-```bash
-cp .env.example .env
-# 编辑 .env 文件
-```
-
-2. **构建并启动所有服务**
-
-```bash
+# 1. 双击 docker-start.bat 或运行：
 docker compose up -d --build
+
+# 2. 访问
+#    前端：http://localhost
+#    后端：http://localhost:8000
+#    MinIO：http://localhost:9001
 ```
 
-3. **查看服务状态**
+**停止服务**：双击 `docker-stop.bat` 或运行 `docker compose down`
+
+### 方式二：本地开发环境
+
+**前提条件**：
+- Python 3.10+
+- Node.js 18+
+- PostgreSQL 14+（需创建 `fltect` 数据库）
+- Redis
 
 ```bash
-docker compose ps
+# 1. 一键安装（双击 setup.bat 或运行）：
+.\install.ps1
+
+# 2. 启动：
+.\start_dev.ps1
 ```
 
-4. **查看日志**
+---
 
-```bash
-docker compose logs -f backend
+## 默认账号
+
+| 用户名 | 密码 | 角色 |
+|--------|------|------|
+| admin | admin123 | 管理员 |
+
+## 角色权限
+
+| 角色 | 权限 |
+|------|------|
+| admin | 所有功能 + 用户管理 |
+| configurer | 环境/模型/优化配置 |
+| viewer | 只读 |
+
+---
+
+## 使用流程
+
+### 1. 创建项目
+
+1. 登录后点击右上角项目选择器
+2. 输入项目名称创建
+
+### 2. 创建环境
+
+1. 进入「环境管理」页面
+2. 点击「新建环境」
+3. 选择模板或自定义配置
+4. 等待生成完成，查看 3D 预览
+
+### 3. 训练监控
+
+1. 进入「训练监控」页面
+2. 选择环境开始训练
+3. 实时查看训练曲线
+
+### 4. 智能优化
+
+1. 进入「优化中心」页面
+2. 选择环境进行评估
+3. 点击「智能优化」自动寻找最优配置
+
+### 5. 用户管理
+
+1. 进入「设置」页面（需要 admin 权限）
+2. 创建/编辑/删除用户
+3. 管理项目成员和角色
+
+---
+
+## 端口配置
+
+编辑 `.env` 文件修改端口：
+
+```env
+FRONTEND_PORT=80      # 前端
+BACKEND_PORT=8000     # 后端
+POSTGRES_PORT=5432    # 数据库
+REDIS_PORT=6379       # Redis
+MINIO_API_PORT=9000   # MinIO API
+MINIO_CONSOLE_PORT=9001  # MinIO 控制台
 ```
 
-5. **停止服务**
-
-```bash
-docker compose down
-```
-
-6. **清除数据卷**
-
-```bash
-docker compose down -v
-```
-
-### 部分Docker部署
-1. **启动依赖服务**
-
-```bash
-docker compose -f docker-compose.dev.yml up -d
-```
-2. **启动后端**
-```bash
-cd backend
-
-# 创建虚拟环境（如果还没有）
-python -m venv .venv
-
-# 激活虚拟环境
-.venv\Scripts\activate
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 运行数据库迁移（如果有）
-alembic upgrade head
-
-# 启动后端
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-3. **启动前端**
-```bash
-cd frontend
-
-# 安装依赖（如果还没安装）
-npm install
-
-# 启动前端
-npm run dev
-```
-
-4. **快速测试**
-```bash
-# 测试后端
-curl http://localhost:8000/docs
-
-# 测试前端（浏览器打开）
-start http://localhost:3000
-
-# 测试 MinIO 控制台
-start http://localhost:9001
-```
-## 默认凭据
-
-| 服务 | 用户名 | 密码 |
-|------|--------|------|
-| **管理后台** | admin | admin123 |
-| **PostgreSQL** | flight_admin | flight_secret |
-| **MinIO Console** | minioadmin | miniosecret |
-
-> ⚠️ 生产环境请务必修改所有默认密码！
-
-## API 文档
-
-启动后端服务后，访问以下地址：
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+---
 
 ## 项目结构
 
 ```
-flight-test-system/
-├── backend/                  # 后端代码
-│   ├── app/                  # 应用主模块
-│   │   ├── api/              # API 路由
-│   │   ├── core/             # 核心配置（安全、数据库等）
-│   │   ├── models/           # 数据模型
-│   │   ├── schemas/          # Pydantic 模式
-│   │   ├── services/         # 业务逻辑
-│   │   └── tasks/            # Celery 任务
+├── backend/              # Python 后端
+│   ├── app/
+│   │   ├── api/          # API 路由
+│   │   ├── core/         # 配置、安全
+│   │   ├── models/       # 数据模型
+│   │   ├── schemas/      # Pydantic 模型
+│   │   ├── services/     # 业务逻辑
+│   │   └── tasks/        # Celery 异步任务
 │   ├── Dockerfile
 │   └── requirements.txt
-├── frontend/                 # 前端代码
+├── frontend/             # Vue 前端
 │   ├── src/
-│   │   ├── api/              # API 请求
-│   │   ├── components/       # 公共组件
-│   │   ├── views/            # 页面视图
-│   │   ├── stores/           # Pinia 状态管理
-│   │   └── router/           # 路由配置
+│   │   ├── api/          # Axios 配置
+│   │   ├── views/        # 页面组件
+│   │   ├── stores/       # Pinia 状态
+│   │   └── router/       # 路由配置
 │   ├── Dockerfile
 │   └── package.json
-├── nginx/                    # Nginx 配置
-│   ├── nginx.conf
-│   └── frontend.conf
-├── docker-compose.yml        # Docker Compose 编排
-├── .env.example              # 环境变量模板
-├── .gitignore
-├── start_dev.ps1             # Windows 开发启动脚本
-├── start_dev.sh              # Linux/Mac 开发启动脚本
-└── README.md
+├── docker-compose.yml    # Docker 编排
+├── install.ps1           # 一键安装脚本
+├── start_dev.ps1         # 开发启动脚本
+└── docker-start.bat      # Docker 启动
 ```
 
-## 服务端口
+---
 
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| Nginx | 80 | 前端入口 + API 代理 |
-| Backend | 8000 | FastAPI 后端 |
-| PostgreSQL | 5432 | 数据库 |
-| Redis | 6379 | 缓存 / 消息队列 |
-| MinIO API | 9000 | 对象存储 API |
-| MinIO Console | 9001 | 对象存储管理界面 |
+## 常见问题
 
-## License
+**Q: Docker 启动后访问不了？**
+A: 等待 1-2 分钟让服务完全启动，检查 `docker compose logs` 查看日志。
 
-MIT
+**Q: 数据库连接失败？**
+A: 确保 PostgreSQL 服务已启动，检查用户名密码是否正确。
+
+**Q: 如何重置数据库？**
+A: `docker compose down -v && docker compose up -d --build`（会清除数据）

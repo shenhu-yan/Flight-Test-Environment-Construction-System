@@ -1,127 +1,82 @@
 import json
 import xml.etree.ElementTree as ET
-
-from app.schemas.env_config import (
-    EnvConfig,
-    TerrainConfig,
-    WeatherConfig,
-    FlightDynamicsConfig,
-    RewardConfig,
-    RewardItem,
-    ObstacleConfig,
-    Waypoint,
-)
+from typing import Union
+from app.schemas.env_config import EnvConfig
 
 
-def parse_json_config(file_content: str) -> EnvConfig:
-    try:
-        data = json.loads(file_content)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON: {e}")
-
-    terrain = TerrainConfig(**data.get("terrain", {}))
-    weather = WeatherConfig(**data.get("weather", {}))
-    flight_dynamics = FlightDynamicsConfig(**data.get("flight_dynamics", {}))
-
-    rewards_data = data.get("rewards", {})
-    reward_items = [RewardItem(**item) for item in rewards_data.get("reward_items", [])]
-    penalty_items = [RewardItem(**item) for item in rewards_data.get("penalty_items", [])]
-    rewards = RewardConfig(reward_items=reward_items, penalty_items=penalty_items)
-
-    obstacles = ObstacleConfig(**data.get("obstacles", {}))
-    waypoints = [Waypoint(**wp) for wp in data.get("waypoints", [])]
-
-    return EnvConfig(
-        terrain=terrain,
-        weather=weather,
-        flight_dynamics=flight_dynamics,
-        rewards=rewards,
-        obstacles=obstacles,
-        waypoints=waypoints,
-    )
+def parse_json_config(config_data: Union[str, dict]) -> EnvConfig:
+    if isinstance(config_data, str):
+        config_data = json.loads(config_data)
+    return EnvConfig(**config_data)
 
 
-def parse_xml_config(file_content: str) -> EnvConfig:
-    try:
-        root = ET.fromstring(file_content)
-    except ET.ParseError as e:
-        raise ValueError(f"Invalid XML: {e}")
+def parse_xml_config(xml_content: str) -> EnvConfig:
+    root = ET.fromstring(xml_content)
+
+    config_dict = {}
 
     terrain_elem = root.find("terrain")
-    terrain_data = {}
     if terrain_elem is not None:
-        terrain_data = {
-            "type": terrain_elem.get("type", "mountain"),
-            "elevation_min": float(terrain_elem.get("elevation_min", "0")),
-            "elevation_max": float(terrain_elem.get("elevation_max", "3000")),
-            "resolution": float(terrain_elem.get("resolution", "1.0")),
+        config_dict["terrain"] = {
+            "type": terrain_elem.findtext("type", "flat"),
+            "elevation_min": float(terrain_elem.findtext("elevation_min", "0")),
+            "elevation_max": float(terrain_elem.findtext("elevation_max", "100")),
+            "resolution": float(terrain_elem.findtext("resolution", "1.0")),
         }
-    terrain = TerrainConfig(**terrain_data)
 
-    weather_elem = root.find("weather")
-    weather_data = {}
-    if weather_elem is not None:
-        weather_data = {
-            "wind_speed": float(weather_elem.get("wind_speed", "5")),
-            "wind_direction": float(weather_elem.get("wind_direction", "0")),
-            "visibility": float(weather_elem.get("visibility", "10000")),
+    atmosphere_elem = root.find("atmosphere")
+    if atmosphere_elem is not None:
+        config_dict["atmosphere"] = {
+            "wind_speed": float(atmosphere_elem.findtext("wind_speed", "5.0")),
+            "wind_direction": float(atmosphere_elem.findtext("wind_direction", "90")),
+            "visibility": float(atmosphere_elem.findtext("visibility", "10000")),
         }
-    weather = WeatherConfig(**weather_data)
 
-    dynamics_elem = root.find("flight_dynamics")
-    dynamics_data = {}
-    if dynamics_elem is not None:
-        dynamics_data = {
-            "aircraft_model": dynamics_elem.get("aircraft_model", "c172p"),
-            "mass": float(dynamics_elem.get("mass", "1000")),
-            "wingspan": float(dynamics_elem.get("wingspan", "11")),
+    aircraft_elem = root.find("aircraft")
+    if aircraft_elem is not None:
+        config_dict["aircraft"] = {
+            "model": aircraft_elem.findtext("model", "c172x"),
+            "mass": float(aircraft_elem.findtext("mass", "1043")),
+            "wingspan": float(aircraft_elem.findtext("wingspan", "11.0")),
         }
-    flight_dynamics = FlightDynamicsConfig(**dynamics_data)
 
-    rewards_elem = root.find("rewards")
-    reward_items = []
-    penalty_items = []
-    if rewards_elem is not None:
-        for ri in rewards_elem.findall("reward_item"):
-            reward_items.append(RewardItem(
-                name=ri.get("name", ""),
-                coefficient=float(ri.get("coefficient", "1.0")),
-            ))
-        for pi in rewards_elem.findall("penalty_item"):
-            penalty_items.append(RewardItem(
-                name=pi.get("name", ""),
-                coefficient=float(pi.get("coefficient", "1.0")),
-            ))
-    rewards = RewardConfig(reward_items=reward_items, penalty_items=penalty_items)
+    reward_elem = root.find("reward")
+    if reward_elem is not None:
+        items = []
+        for item in reward_elem.findall("item"):
+            items.append({
+                "name": item.findtext("name", ""),
+                "coefficient": float(item.findtext("coefficient", "1.0")),
+            })
+        penalties = []
+        for penalty in reward_elem.findall("penalty"):
+            penalties.append({
+                "name": penalty.findtext("name", ""),
+                "coefficient": float(penalty.findtext("coefficient", "-1.0")),
+            })
+        config_dict["reward"] = {"items": items, "penalties": penalties}
 
     obstacles_elem = root.find("obstacles")
-    obstacles_data = {}
     if obstacles_elem is not None:
-        types_str = obstacles_elem.get("types", "")
-        obstacles_data = {
-            "count": int(obstacles_elem.get("count", "0")),
-            "types": [t.strip() for t in types_str.split(",") if t.strip()],
-            "density": float(obstacles_elem.get("density", "0")),
+        types = []
+        for t in obstacles_elem.findall("type"):
+            types.append(t.text)
+        config_dict["obstacles"] = {
+            "count": int(obstacles_elem.findtext("count", "0")),
+            "types": types,
+            "density": float(obstacles_elem.findtext("density", "0.0")),
         }
-    obstacles = ObstacleConfig(**obstacles_data)
 
-    waypoints = []
     waypoints_elem = root.find("waypoints")
     if waypoints_elem is not None:
-        for wp_elem in waypoints_elem.findall("waypoint"):
-            pos_str = wp_elem.get("position", "0,0,0")
-            pos_parts = [float(p.strip()) for p in pos_str.split(",")]
-            waypoints.append(Waypoint(
-                id=wp_elem.get("id", ""),
-                position=pos_parts,
-                order=int(wp_elem.get("order", "0")),
-            ))
+        waypoints = []
+        for wp in waypoints_elem.findall("waypoint"):
+            position = wp.findtext("position", "0,0,100").split(",")
+            waypoints.append({
+                "id": wp.findtext("id", ""),
+                "position": [float(p) for p in position],
+                "order": int(wp.findtext("order", "1")),
+            })
+        config_dict["waypoints"] = waypoints
 
-    return EnvConfig(
-        terrain=terrain,
-        weather=weather,
-        flight_dynamics=flight_dynamics,
-        rewards=rewards,
-        obstacles=obstacles,
-        waypoints=waypoints,
-    )
+    return EnvConfig(**config_dict)

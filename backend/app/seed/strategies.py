@@ -1,81 +1,88 @@
-import logging
+import json
+from sqlalchemy import text
+from app.core.database import async_session
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.env import StrategyRule
-
-logger = logging.getLogger(__name__)
-
-
-STRATEGIES_DATA = [
+DEFAULT_STRATEGIES = [
     {
-        "name": "convergence_slow",
-        "condition_config": {
-            "convergence_speed": {"operator": "<", "threshold": 0.3},
+        "id": "00000000-0000-0000-0000-000000000001",
+        "name": "收敛过慢时降低难度",
+        "condition": {
+            "metric": "convergence_speed",
+            "operator": "<",
+            "threshold": 0.3,
+            "duration_steps": 1000
         },
-        "action_config": {
-            "adjust": {
-                "rewards.reward_items": [
-                    {"name": "altitude_maintenance", "coefficient": 2.0},
-                    {"name": "waypoint_reached", "coefficient": 10.0},
-                ],
-            },
-            "description": "Increase rewards when convergence is slow",
+        "action": {
+            "type": "param_adjust",
+            "adjustments": [
+                {"param": "wind_speed", "op": "multiply", "value": 0.7},
+                {"param": "obstacle_count", "op": "decrease", "value": 2}
+            ]
         },
-        "priority": 10,
+        "priority": 1,
+        "enabled": True
     },
     {
-        "name": "success_low",
-        "condition_config": {
-            "success_rate": {"operator": "<", "threshold": 0.2},
+        "id": "00000000-0000-0000-0000-000000000002",
+        "name": "成功率过低减少障碍",
+        "condition": {
+            "metric": "success_rate",
+            "operator": "<",
+            "threshold": 0.2,
+            "duration_steps": 500
         },
-        "action_config": {
-            "adjust": {
-                "obstacles.count": 5,
-                "obstacles.density": 0.1,
-            },
-            "description": "Reduce obstacle difficulty when success rate is low",
+        "action": {
+            "type": "param_adjust",
+            "adjustments": [
+                {"param": "obstacle_count", "op": "decrease", "value": 3}
+            ]
         },
-        "priority": 20,
+        "priority": 2,
+        "enabled": True
     },
     {
-        "name": "reward_high",
-        "condition_config": {
-            "episode_reward": {"operator": ">", "threshold": 500},
+        "id": "00000000-0000-0000-0000-000000000003",
+        "name": "奖励过高增加复杂度",
+        "condition": {
+            "metric": "episode_reward",
+            "operator": ">",
+            "threshold": 500,
+            "duration_steps": 2000
         },
-        "action_config": {
-            "adjust": {
-                "obstacles.count": 30,
-                "obstacles.density": 0.5,
-                "weather.wind_speed": 20,
-            },
-            "description": "Increase difficulty when rewards are too high",
+        "action": {
+            "type": "param_adjust",
+            "adjustments": [
+                {"param": "wind_speed", "op": "multiply", "value": 1.3},
+                {"param": "obstacle_count", "op": "increase", "value": 2}
+            ]
         },
-        "priority": 5,
-    },
+        "priority": 3,
+        "enabled": True
+    }
 ]
 
 
-async def seed_strategies(db: AsyncSession):
-    for strategy_data in STRATEGIES_DATA:
-        result = await db.execute(
-            select(StrategyRule).where(StrategyRule.name == strategy_data["name"])
+async def seed_default_strategies():
+    async with async_session() as session:
+        result = await session.execute(
+            text("SELECT id FROM strategies LIMIT 1")
         )
-        existing = result.scalar_one_or_none()
-        if existing is not None:
-            continue
-
-        rule = StrategyRule(
-            name=strategy_data["name"],
-            project_id=None,
-            condition_config=strategy_data["condition_config"],
-            action_config=strategy_data["action_config"],
-            priority=strategy_data["priority"],
-            enabled=True,
-        )
-        db.add(rule)
-        logger.info(f"Seeded strategy rule: {strategy_data['name']}")
-
-    await db.commit()
-    logger.info("Strategy rules seeding completed")
+        if result.fetchone() is None:
+            for strategy in DEFAULT_STRATEGIES:
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO strategies (id, name, condition, action, priority, enabled, created_at)
+                        VALUES (:id, :name, :condition, :action, :priority, :enabled, NOW())
+                        """
+                    ),
+                    {
+                        "id": strategy["id"],
+                        "name": strategy["name"],
+                        "condition": json.dumps(strategy["condition"]),
+                        "action": json.dumps(strategy["action"]),
+                        "priority": strategy["priority"],
+                        "enabled": strategy["enabled"],
+                    },
+                )
+            await session.commit()

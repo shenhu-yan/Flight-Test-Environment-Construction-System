@@ -1,130 +1,140 @@
 import uuid
-
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+import json
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
-from app.database import get_db
-from app.models.template import Template
-from app.models.user import User
-from app.schemas.common import ResponseModel, PaginatedResponse
-from app.schemas.template import TemplateCreate, TemplateUpdate, TemplateResponse
-from app.core.deps import get_current_active_user
+from app.core.database import get_db
+from app.core.security import get_current_user, require_admin
+from app.schemas.template import TemplateCreate, TemplateUpdate
 
-router = APIRouter(prefix="/templates", tags=["templates"])
+router = APIRouter()
 
 
-@router.get("", response_model=PaginatedResponse[TemplateResponse])
-async def list_templates(
-    aircraft_type: str | None = None,
-    difficulty: str | None = None,
-    page: int = 1,
-    page_size: int = 20,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+@router.get("")
+async def get_templates(
+    aircraft_type: str = Query(None),
+    difficulty: str = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    offset = (page - 1) * page_size
-    stmt = select(Template)
-    count_stmt = select(func.count(Template.id))
+    query = "SELECT id, name, aircraft_type, difficulty, config, is_builtin, created_by, created_at FROM templates WHERE 1=1"
+    params = {}
 
     if aircraft_type:
-        stmt = stmt.where(Template.aircraft_type == aircraft_type)
-        count_stmt = count_stmt.where(Template.aircraft_type == aircraft_type)
+        query += " AND aircraft_type = :aircraft_type"
+        params["aircraft_type"] = aircraft_type
     if difficulty:
-        stmt = stmt.where(Template.difficulty == difficulty)
-        count_stmt = count_stmt.where(Template.difficulty == difficulty)
+        query += " AND difficulty = :difficulty"
+        params["difficulty"] = difficulty
 
-    total_result = await db.execute(count_stmt)
-    total = total_result.scalar()
+    query += " ORDER BY is_builtin DESC, created_at DESC"
 
-    result = await db.execute(stmt.order_by(Template.created_at.desc()).offset(offset).limit(page_size))
-    templates = result.scalars().all()
+    result = await db.execute(text(query), params)
+    templates = result.fetchall()
+    return {
+        "code": 0,
+        "data": [
+            {
+                "id": t[0],
+                "name": t[1],
+                "aircraft_type": t[2],
+                "difficulty": t[3],
+                "config": json.loads(t[4]) if isinstance(t[4], str) else t[4],
+                "is_builtin": t[5],
+                "created_by": t[6],
+                "created_at": str(t[7]) if t[7] else None,
+            }
+            for t in templates
+        ]
+    }
 
-    return PaginatedResponse(
-        data=[TemplateResponse.model_validate(t) for t in templates],
-        total=total,
-        page=page,
-        page_size=page_size,
-    )
 
-
-@router.post("", response_model=ResponseModel[TemplateResponse], status_code=201)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_template(
-    request: TemplateCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    template_data: TemplateCreate,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    template = Template(
-        id=str(uuid.uuid4()),
-        name=request.name,
-        aircraft_type=request.aircraft_type,
-        difficulty=request.difficulty,
-        config=request.config,
-        is_builtin=False,
-        created_by=current_user.id,
+    template_id = str(uuid.uuid4())
+    await db.execute(
+        text(
+            """
+            INSERT INTO templates (id, name, aircraft_type, difficulty, config, is_builtin, created_by, created_at)
+            VALUES (:id, :name, :aircraft_type, :difficulty, :config, false, :created_by, NOW())
+            """
+        ),
+        {
+            "id": template_id,
+            "name": template_data.name,
+            "aircraft_type": template_data.aircraft_type,
+            "difficulty": template_data.difficulty,
+            "config": json.dumps(template_data.config),
+            "created_by": current_user["id"],
+        }
     )
-    db.add(template)
-    await db.commit()
-    await db.refresh(template)
-    return ResponseModel(data=TemplateResponse.model_validate(template))
+
+    return {"code": 0, "data": {"id": template_id, "name": template_data.name}}
 
 
-@router.get("/{template_id}", response_model=ResponseModel[TemplateResponse])
-async def get_template(
-    template_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    result = await db.execute(select(Template).where(Template.id == template_id))
-    template = result.scalar_one_or_none()
-    if template is None:
-        raise HTTPException(status_code=404, detail="Template not found")
-    return ResponseModel(data=TemplateResponse.model_validate(template))
-
-
-@router.put("/{template_id}", response_model=ResponseModel[TemplateResponse])
+@router.put("/{template_id}")
 async def update_template(
     template_id: str,
-    request: TemplateUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    template_data: TemplateUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(Template).where(Template.id == template_id))
-    template = result.scalar_one_or_none()
-    if template is None:
-        raise HTTPException(status_code=404, detail="Template not found")
+    result = await db.execute(
+        text("SELECT id, is_builtin FROM templates WHERE id = :id"),
+        {"id": template_id}
+    )
+    template = result.fetchone()
+    if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
 
-    if template.is_builtin and current_user.global_role != "admin":
-        raise HTTPException(status_code=403, detail="Cannot modify builtin templates")
+    if template[1] and current_user["global_role"] != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot modify builtin template")
 
-    if request.name is not None:
-        template.name = request.name
-    if request.aircraft_type is not None:
-        template.aircraft_type = request.aircraft_type
-    if request.difficulty is not None:
-        template.difficulty = request.difficulty
-    if request.config is not None:
-        template.config = request.config
+    updates = []
+    params = {"id": template_id}
+    if template_data.name:
+        updates.append("name = :name")
+        params["name"] = template_data.name
+    if template_data.aircraft_type:
+        updates.append("aircraft_type = :aircraft_type")
+        params["aircraft_type"] = template_data.aircraft_type
+    if template_data.difficulty:
+        updates.append("difficulty = :difficulty")
+        params["difficulty"] = template_data.difficulty
+    if template_data.config:
+        updates.append("config = :config")
+        params["config"] = json.dumps(template_data.config)
 
-    await db.commit()
-    await db.refresh(template)
-    return ResponseModel(data=TemplateResponse.model_validate(template))
+    if updates:
+        await db.execute(
+            text(f"UPDATE templates SET {', '.join(updates)}, updated_at = NOW() WHERE id = :id"),
+            params
+        )
+
+    return {"code": 0, "message": "Template updated successfully"}
 
 
-@router.delete("/{template_id}", response_model=ResponseModel)
+@router.delete("/{template_id}")
 async def delete_template(
     template_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(Template).where(Template.id == template_id))
-    template = result.scalar_one_or_none()
-    if template is None:
-        raise HTTPException(status_code=404, detail="Template not found")
+    result = await db.execute(
+        text("SELECT id, is_builtin FROM templates WHERE id = :id"),
+        {"id": template_id}
+    )
+    template = result.fetchone()
+    if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
 
-    if template.is_builtin:
-        raise HTTPException(status_code=403, detail="Cannot delete builtin templates")
+    if template[1] and current_user["global_role"] != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete builtin template")
 
-    await db.delete(template)
-    await db.commit()
-    return ResponseModel(message="Template deleted successfully")
+    await db.execute(text("DELETE FROM templates WHERE id = :id"), {"id": template_id})
+    return {"code": 0, "message": "Template deleted successfully"}

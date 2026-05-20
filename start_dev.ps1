@@ -1,36 +1,23 @@
-# Flight Test System - Development Startup Script (PowerShell)
+Write-Host "Starting Flight Test Environment Construction System..." -ForegroundColor Green
 
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Flight Test System - Dev Environment  " -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-
-# Check if .env exists
-if (-not (Test-Path .env)) {
-    Write-Host "[INFO] No .env file found. Copying from .env.example..." -ForegroundColor Yellow
-    Copy-Item .env.example .env
+# 检测虚拟环境
+$backendCmd = "python"
+if (Test-Path "$PSScriptRoot\backend\venv\Scripts\python.exe") {
+    $backendCmd = "$PSScriptRoot\backend\venv\Scripts\python.exe"
+    Write-Host "`n  Using virtual environment" -ForegroundColor DarkGray
 }
 
-Write-Host "[1/3] Starting Backend (uvicorn)..." -ForegroundColor Green
-$backendProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd backend; python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000" -PassThru -WindowStyle Normal
+Write-Host "`n[1/3] Starting Backend Server..." -ForegroundColor Cyan
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot\backend'; & '$backendCmd' run.py"
 
-Write-Host "[2/3] Starting Celery Worker..." -ForegroundColor Green
-$celeryProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd backend; celery -A app.celery_app worker -l info" -PassThru -WindowStyle Normal
+Write-Host "[2/3] Starting Celery Worker..." -ForegroundColor Cyan
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot\backend'; & '$backendCmd' -m celery -A app.celery_app worker --loglevel=info"
 
-Write-Host "[3/3] Starting Frontend (Vite)..." -ForegroundColor Green
-$frontendProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd frontend; npm run dev" -PassThru -WindowStyle Normal
+Write-Host "[3/3] Starting Frontend Server..." -ForegroundColor Cyan
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot\frontend'; npm run dev"
 
-Write-Host ""
-Write-Host "All services started!" -ForegroundColor Cyan
-Write-Host "  Backend  : http://localhost:8000" -ForegroundColor White
-Write-Host "  Frontend : http://localhost:3000" -ForegroundColor White
-Write-Host "  API Docs : http://localhost:8000/docs" -ForegroundColor White
-Write-Host ""
-Write-Host "Press any key to stop all services..." -ForegroundColor Yellow
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-
-# Kill processes
-$backendProc | Stop-Process -Force -ErrorAction SilentlyContinue
-$celeryProc | Stop-Process -Force -ErrorAction SilentlyContinue
-$frontendProc | Stop-Process -Force -ErrorAction SilentlyContinue
-
-Write-Host "All services stopped." -ForegroundColor Red
+Write-Host "`nAll services started!" -ForegroundColor Green
+Write-Host "Backend: http://localhost:8000" -ForegroundColor Yellow
+Write-Host "API Docs: http://localhost:8000/docs" -ForegroundColor Yellow
+Write-Host "Frontend: http://localhost:5173" -ForegroundColor Yellow
+Write-Host "Celery Worker: Running in background" -ForegroundColor Yellow

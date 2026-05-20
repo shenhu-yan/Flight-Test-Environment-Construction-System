@@ -1,25 +1,51 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'Login',
-    component: () => import('../views/Login.vue'),
+    component: () => import('@/views/Login.vue'),
     meta: { requiresAuth: false }
   },
   {
     path: '/',
-    component: () => import('../components/layout/AppLayout.vue'),
+    name: 'Layout',
+    component: () => import('@/layout/index.vue'),
+    redirect: '/envs',
     meta: { requiresAuth: true },
     children: [
-      { path: '', name: 'Projects', component: () => import('../views/Projects.vue') },
-      { path: 'projects', name: 'ProjectsAlias', component: () => import('../views/Projects.vue') },
-      { path: 'env-generation', name: 'EnvGeneration', component: () => import('../views/EnvGeneration.vue') },
-      { path: 'monitor', name: 'Monitor', component: () => import('../views/Monitor.vue') },
-      { path: 'optimization', name: 'Optimization', component: () => import('../views/Optimization.vue') },
-      { path: 'models', name: 'Models', component: () => import('../views/Models.vue') },
-      { path: 'settings', name: 'Settings', component: () => import('../views/Settings.vue') }
+      {
+        path: 'envs',
+        name: 'Envs',
+        component: () => import('@/views/Envs.vue'),
+        meta: { title: '环境管理' }
+      },
+      {
+        path: 'monitor',
+        name: 'Monitor',
+        component: () => import('@/views/Monitor.vue'),
+        meta: { title: '训练监控' }
+      },
+      {
+        path: 'optimization',
+        name: 'Optimization',
+        component: () => import('@/views/Optimization.vue'),
+        meta: { title: '优化中心' }
+      },
+      {
+        path: 'models',
+        name: 'Models',
+        component: () => import('@/views/Models.vue'),
+        meta: { title: '模型库' }
+      },
+      {
+        path: 'settings',
+        name: 'Settings',
+        component: () => import('@/views/Settings.vue'),
+        meta: { title: '设置' }
+      }
     ]
   }
 ]
@@ -29,11 +55,12 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to, _from, next) => {
-  const token = localStorage.getItem('token')
-  if (to.meta.requiresAuth !== false && !token) {
+router.beforeEach((to, from, next) => {
+  const authStore = useAuthStore()
+
+  if (to.meta.requiresAuth !== false && !authStore.isAuthenticated) {
     next('/login')
-  } else if (to.path === '/login' && token) {
+  } else if (to.path === '/login' && authStore.isAuthenticated) {
     next('/')
   } else {
     next()

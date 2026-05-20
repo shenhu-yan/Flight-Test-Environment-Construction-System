@@ -1,30 +1,32 @@
 import axios from 'axios'
-import { ElMessage } from 'element-plus'
+import { useAuthStore } from '@/stores/auth'
+import router from '@/router'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: 'http://localhost:8000',
   timeout: 30000,
-  headers: { 'Content-Type': 'application/json' }
 })
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+api.interceptors.request.use(
+  (config) => {
+    const authStore = useAuthStore()
+    if (authStore.token) {
+      config.headers.Authorization = `Bearer ${authStore.token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
   }
-  return config
-})
+)
 
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token')
-      window.location.href = '/login'
-    } else if (error.response?.status === 403) {
-      ElMessage.error('权限不足')
-    } else {
-      ElMessage.error(error.response?.data?.detail || error.message || '请求失败')
+      const authStore = useAuthStore()
+      authStore.logout()
+      router.push('/login')
     }
     return Promise.reject(error)
   }

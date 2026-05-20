@@ -1,62 +1,74 @@
-version: "3.9"
+version: '3.8'
 
 services:
+  # PostgreSQL Database
   postgres:
-    image: postgres:14
-    restart: unless-stopped
+    image: postgres:15-alpine
+    container_name: fltect-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-flight_admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flight_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-flight_test}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-fltect}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    networks:
-      - flight-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-flight_admin}"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - fltect-network
 
+  # Redis Cache & Message Queue
   redis:
     image: redis:7-alpine
-    restart: unless-stopped
+    container_name: fltect-redis
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
-    networks:
-      - flight-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - fltect-network
 
+  # MinIO Object Storage
   minio:
-    image: minio/minio
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
+    image: minio/minio:latest
+    container_name: fltect-minio
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniosecret}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    command: server /data --console-address ":9001"
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
     networks:
-      - flight-network
+      - fltect-network
 
+  # Backend API Server
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file:
-      - .env
+    container_name: fltect-backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fltect}
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-fltect}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-in-production}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -67,38 +79,47 @@ services:
       minio:
         condition: service_started
     networks:
-      - flight-network
+      - fltect-network
 
+  # Celery Worker (async tasks)
   celery-worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file:
-      - .env
-    command: celery -A app.celery_app worker -l info -c ${CELERY_CONCURRENCY:-4}
+    container_name: fltect-celery
+    command: celery -A app.celery_app worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fltect}
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-fltect}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-in-production}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
     networks:
-      - flight-network
+      - fltect-network
 
-  nginx:
-    image: nginx:alpine
-    restart: unless-stopped
+  # Frontend (Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: fltect-frontend
     ports:
-      - "${NGINX_PORT:-80}:80"
-      - "${NGINX_SSL_PORT:-443}:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/frontend.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./frontend/dist:/usr/share/nginx/html:ro
+      - "${FRONTEND_PORT:-80}:80"
     depends_on:
       - backend
     networks:
-      - flight-network
+      - fltect-network
 
 volumes:
   postgres_data:
@@ -106,5 +127,5 @@ volumes:
   minio_data:
 
 networks:
-  flight-network:
+  fltect-network:
     driver: bridge

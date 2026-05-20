@@ -1,126 +1,75 @@
-import logging
-from typing import Any
-
 from app.schemas.env_config import EnvConfig
-
-logger = logging.getLogger(__name__)
 
 
 class JSBSimEngine:
-    def __init__(self):
-        self._sim = None
-        try:
-            import jsbsim
-            self._sim = jsbsim.FGFDMExec(None)
-            logger.info("JSBSim engine initialized successfully")
-        except ImportError:
-            logger.warning("JSBSim not available, using mock engine")
+    def __init__(self, config: EnvConfig):
+        self.config = config
+        self.fdm = None
 
-    def build_environment(self, config: EnvConfig) -> dict[str, Any]:
-        groundXML = self._build_ground_xml(config)
-        weatherXML = self._build_weather_xml(config)
-        aircraftXML = self._build_aircraft_xml(config)
-        flightXML = self._build_flight_xml(config)
+    def build_environment(self) -> dict:
+        aircraft_xml = self._generate_aircraft_xml()
+        atmosphere_xml = self._generate_atmosphere_xml()
+        terrain_xml = self._generate_terrain_xml()
 
         return {
-            "ground_xml": groundXML,
-            "weather_xml": weatherXML,
-            "aircraft_xml": aircraftXML,
-            "flight_xml": flightXML,
-            "jsbsim_config": {
-                "aircraft_model": config.flight_dynamics.aircraft_model,
-                "mass": config.flight_dynamics.mass,
-                "wingspan": config.flight_dynamics.wingspan,
-                "wind_speed": config.weather.wind_speed,
-                "wind_direction": config.weather.wind_direction,
-                "visibility": config.weather.visibility,
-                "terrain_type": config.terrain.type,
-                "elevation_min": config.terrain.elevation_min,
-                "elevation_max": config.terrain.elevation_max,
-            },
+            "aircraft_xml": aircraft_xml,
+            "atmosphere_xml": atmosphere_xml,
+            "terrain_xml": terrain_xml,
         }
 
-    def _build_ground_xml(self, config: EnvConfig) -> str:
-        terrain = config.terrain
-        xml_parts = [
-            '<?xml version="1.0" encoding="UTF-8"?>',
-            '<ground xmlns:xi="http://www.w3.org/2001/XInclude">',
-            f'  <terrain type="{terrain.type}">',
-            f'    <elevation-min>{terrain.elevation_min}</elevation-min>',
-            f'    <elevation-max>{terrain.elevation_max}</elevation-max>',
-            f'    <resolution>{terrain.resolution}</resolution>',
-            "  </terrain>",
-        ]
-        for wp in config.waypoints:
-            xml_parts.append(
-                f'  <waypoint id="{wp.id}" x="{wp.position[0]}" '
-                f'y="{wp.position[1]}" z="{wp.position[2]}" />'
-            )
-        for i, obstacle in enumerate(config.obstacles.types):
-            xml_parts.append(f'  <obstacle id="obs_{i}" type="{obstacle}" />')
-        xml_parts.append("</ground>")
-        return "\n".join(xml_parts)
-
-    def _build_weather_xml(self, config: EnvConfig) -> str:
-        w = config.weather
+    def _generate_aircraft_xml(self) -> str:
+        aircraft = self.config.aircraft
         return f"""<?xml version="1.0" encoding="UTF-8"?>
-<weather>
+<fdm_config name="{aircraft.model}" version="2.0">
+  <ground_reactions>
+    <gear_unit name="NOSEGEAR" type="BOGEY">
+      <location name="unitx" unit="IN">
+        <x>0</x>
+        <y>0</y>
+        <z>0</z>
+      </location>
+      <static_friction>0.8</static_friction>
+      <dynamic_friction>0.5</dynamic_friction>
+    </gear_unit>
+  </ground_reactions>
+  <mass balance_type="POINT_MASS">
+    <ixx>12875.0</ixx>
+    <iyy>18249.0</iyy>
+    <izz>26667.0</izz>
+    <ixz>2275.0</ixz>
+    <emptywt>{aircraft.mass * 9.81}</emptywt>
+  </mass>
+</fdm_config>"""
+
+    def _generate_atmosphere_xml(self) -> str:
+        atm = self.config.atmosphere
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<atmosphere>
   <wind>
-    <wind-speed-unit>KT</wind-speed-unit>
-    <wind-speed>{w.wind_speed}</wind-speed>
-    <wind-direction-deg>{w.wind_direction}</wind-direction-deg>
+    <north>{atm.wind_speed * __import__('math').cos(__import__('math').radians(atm.wind_direction))}</north>
+    <east>{atm.wind_speed * __import__('math').sin(__import__('math').radians(atm.wind_direction))}</east>
+    <down>0</down>
   </wind>
-  <visibility>
-    <visibility-unit>FT</visibility-unit>
-    <visibility>{w.visibility}</visibility>
-  </visibility>
-</weather>"""
+  <visibility>{atm.visibility}</visibility>
+</atmosphere>"""
 
-    def _build_aircraft_xml(self, config: EnvConfig) -> str:
-        fd = config.flight_dynamics
+    def _generate_terrain_xml(self) -> str:
+        terrain = self.config.terrain
         return f"""<?xml version="1.0" encoding="UTF-8"?>
-<aircraft name="{fd.aircraft_model}">
-  <mass>{fd.mass}</mass>
-  <wingspan>{fd.wingspan}</wingspan>
-</aircraft>"""
+<terrain>
+  <type>{terrain.type.value}</type>
+  <elevation_min>{terrain.elevation_min}</elevation_min>
+  <elevation_max>{terrain.elevation_max}</elevation_max>
+  <resolution>{terrain.resolution}</resolution>
+</terrain>"""
 
-    def _build_flight_xml(self, config: EnvConfig) -> str:
-        xml_parts = [
-            '<?xml version="1.0" encoding="UTF-8"?>',
-            '<flight-plan>',
-            "  <waypoints>",
-        ]
-        for wp in config.waypoints:
-            xml_parts.append(
-                f'    <waypoint id="{wp.id}" x="{wp.position[0]}" '
-                f'y="{wp.position[1]}" z="{wp.position[2]}" order="{wp.order}" />'
-            )
-        xml_parts.append("  </waypoints>")
-        xml_parts.append("</flight-plan>")
-        return "\n".join(xml_parts)
+    def reset(self):
+        if self.fdm:
+            self.fdm.reset_to_initial_conditions(0)
 
-    def run_simulation_step(self, config: EnvConfig) -> dict[str, Any]:
-        if self._sim is not None:
-            try:
-                self._sim.run()
-                return {
-                    "altitude": self._sim["position/h-sl-ft"],
-                    "latitude": self._sim["position/lat-geod-deg"],
-                    "longitude": self._sim["position/long-geod-deg"],
-                    "velocity": self._sim["velocities/v-north-fps"],
-                    "success": True,
-                }
-            except Exception as e:
-                logger.error(f"JSBSim simulation error: {e}")
-                return {"error": str(e), "success": False}
+    def step(self, action: dict) -> dict:
         return {
-            "altitude": 1000.0,
-            "latitude": 0.0,
-            "longitude": 0.0,
-            "velocity": 0.0,
-            "success": True,
-            "mock": True,
+            "position": [0, 0, 100],
+            "velocity": [0, 0, 0],
+            "attitude": [0, 0, 0],
         }
-
-
-jsbsim_engine = JSBSimEngine()

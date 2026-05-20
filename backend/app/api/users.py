@@ -1,132 +1,140 @@
-import uuid
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
-from app.database import get_db
-from app.models.user import User
-from app.schemas.common import ResponseModel, PaginatedResponse
-from app.schemas.user import UserCreate, UserUpdate, UserResponse
-from app.services.security import hash_password
-from app.core.deps import require_admin, get_current_active_user
+from app.core.database import get_db
+from app.core.security import get_current_user, require_admin, get_password_hash
+from app.schemas.auth import UserCreate, UserUpdate, UserOut
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter()
 
 
-@router.get("", response_model=PaginatedResponse[UserResponse])
-async def list_users(
-    page: int = 1,
-    page_size: int = 20,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+@router.get("")
+async def get_users(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
 ):
-    offset = (page - 1) * page_size
-    count_result = await db.execute(select(func.count(User.id)))
-    total = count_result.scalar()
-
     result = await db.execute(
-        select(User).order_by(User.created_at.desc()).offset(offset).limit(page_size)
+        text("SELECT id, username, global_role, created_at FROM users ORDER BY created_at DESC")
     )
-    users = result.scalars().all()
-
-    return PaginatedResponse(
-        data=[UserResponse.model_validate(u) for u in users],
-        total=total,
-        page=page,
-        page_size=page_size,
-    )
-
-
-@router.get("/me", response_model=ResponseModel[UserResponse])
-async def get_me(current_user: User = Depends(get_current_active_user)):
-    return ResponseModel(data=UserResponse.model_validate(current_user))
+    users = result.fetchall()
+    return {
+        "code": 0,
+        "data": [
+            {"id": u[0], "username": u[1], "global_role": u[2], "created_at": str(u[3]) if u[3] else None}
+            for u in users
+        ]
+    }
 
 
-@router.get("/{user_id}", response_model=ResponseModel[UserResponse])
-async def get_user(
-    user_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return ResponseModel(data=UserResponse.model_validate(user))
-
-
-@router.post("", response_model=ResponseModel[UserResponse], status_code=201)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_user(
-    request: UserCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    user_data: UserCreate,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
 ):
-    existing = await db.execute(select(User).where(User.username == request.username))
-    if existing.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=400, detail="Username already exists")
-
-    user = User(
-        id=str(uuid.uuid4()),
-        username=request.username,
-        password_hash=hash_password(request.password),
-        global_role=request.global_role,
+    existing = await db.execute(
+        text("SELECT id FROM users WHERE username = :username"),
+        {"username": user_data.username}
     )
-    db.add(user)
+    if existing.fetchone():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already exists"
+        )
+
+    import uuid
+    user_id = str(uuid.uuid4())
+    hashed_password = get_password_hash(user_data.password)
+
+    await db.execute(
+        text(
+            """
+            INSERT INTO users (id, username, password_hash, global_role, created_at)
+            VALUES (:id, :username, :password_hash, :global_role, NOW())
+            """
+        ),
+        {
+            "id": user_id,
+            "username": user_data.username,
+            "password_hash": hashed_password,
+            "global_role": user_data.global_role,
+        }
+    )
+
     await db.commit()
-    await db.refresh(user)
-
-    return ResponseModel(data=UserResponse.model_validate(user))
+    return {"code": 0, "data": {"id": user_id, "username": user_data.username, "global_role": user_data.global_role}}
 
 
-@router.put("/{user_id}", response_model=ResponseModel[UserResponse])
+@router.put("/{user_id}")
 async def update_user(
     user_id: str,
-    request: UserUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    user_data: UserUpdate,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
 ):
-    if current_user.id != user_id and current_user.global_role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized to update this user")
+    result = await db.execute(
+        text("SELECT id FROM users WHERE id = :id"),
+        {"id": user_id}
+    )
+    if not result.fetchone():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+    updates = []
+    params = {"id": user_id}
+    if user_data.username:
+        updates.append("username = :username")
+        params["username"] = user_data.username
+    if user_data.global_role:
+        updates.append("global_role = :global_role")
+        params["global_role"] = user_data.global_role
 
-    if request.username is not None:
-        existing = await db.execute(
-            select(User).where(User.username == request.username, User.id != user_id)
+    if updates:
+        await db.execute(
+            text(f"UPDATE users SET {', '.join(updates)}, updated_at = NOW() WHERE id = :id"),
+            params
         )
-        if existing.scalar_one_or_none() is not None:
-            raise HTTPException(status_code=400, detail="Username already exists")
-        user.username = request.username
-
-    if request.password is not None:
-        user.password_hash = hash_password(request.password)
-
-    if request.global_role is not None:
-        if current_user.global_role != "admin":
-            raise HTTPException(status_code=403, detail="Only admin can change roles")
-        user.global_role = request.global_role
-
     await db.commit()
-    await db.refresh(user)
-    return ResponseModel(data=UserResponse.model_validate(user))
+
+    return {"code": 0, "message": "User updated successfully"}
 
 
-@router.delete("/{user_id}", response_model=ResponseModel)
+@router.post("/{user_id}/reset-password")
+async def reset_password(
+    user_id: str,
+    password_data: dict,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        text("SELECT id FROM users WHERE id = :id"),
+        {"id": user_id}
+    )
+    if not result.fetchone():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    hashed_password = get_password_hash(password_data.get("password", ""))
+    await db.execute(
+        text("UPDATE users SET password_hash = :password_hash, updated_at = NOW() WHERE id = :id"),
+        {"password_hash": hashed_password, "id": user_id}
+    )
+    await db.commit()
+    return {"code": 0, "message": "Password reset successfully"}
+
+
+@router.delete("/{user_id}")
 async def delete_user(
     user_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+    result = await db.execute(
+        text("SELECT id FROM users WHERE id = :id"),
+        {"id": user_id}
+    )
+    if not result.fetchone():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    await db.delete(user)
+    await db.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
     await db.commit()
-    return ResponseModel(message="User deleted successfully")
+    return {"code": 0, "message": "User deleted successfully"}

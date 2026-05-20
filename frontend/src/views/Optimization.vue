@@ -1,412 +1,488 @@
 <template>
-  <div class="optimization">
-    <div class="page-header">
-      <h1 class="page-title">优化中心</h1>
-      <p class="page-desc">环境参数多维评估与自动优化</p>
-    </div>
-
-    <!-- Top: Radar Chart + Scores -->
-    <div class="opt-top">
-      <div class="radar-section">
-        <el-card shadow="never">
-          <template #header><span>环境评估雷达图</span></template>
-          <v-chart class="radar-chart" :option="radarOption" autoresize />
-        </el-card>
+  <div class="optimization-page">
+    <!-- 顶部操作栏 -->
+    <el-card class="action-bar">
+      <div class="action-bar-content">
+        <div class="action-left">
+          <el-select v-model="selectedEnvId" placeholder="选择环境" style="width: 200px">
+            <el-option
+              v-for="env in envs"
+              :key="env.id"
+              :label="env.name"
+              :value="env.id"
+            />
+          </el-select>
+        </div>
+        <div class="action-right">
+          <el-button type="success" @click="evaluateEnv" :loading="evaluating" :disabled="!selectedEnvId">
+            评估环境
+          </el-button>
+          <el-button type="primary" @click="showCreateTaskDialog = true" :disabled="!selectedEnvId">
+            智能优化
+          </el-button>
+        </div>
       </div>
-      <div class="score-section">
-        <el-card shadow="never">
-          <template #header><span>综合评分</span></template>
-          <div class="score-display">
-            <div class="total-score">{{ totalScore.toFixed(1) }}</div>
-            <div class="score-label">/ 100</div>
-          </div>
-          <div class="score-breakdown">
-            <div class="score-item">
-              <span class="score-name">多样性</span>
-              <el-progress :percentage="scores.diversity" :color="'#0066cc'" />
-            </div>
-            <div class="score-item">
-              <span class="score-name">挑战性</span>
-              <el-progress :percentage="scores.challenge" :color="'#ff9500'" />
-            </div>
-            <div class="score-item">
-              <span class="score-name">真实性</span>
-              <el-progress :percentage="scores.realism" :color="'#34c759'" />
-            </div>
-            <div class="score-item">
-              <span class="score-name">有效性</span>
-              <el-progress :percentage="scores.effectiveness" :color="'#af52de'" />
-            </div>
-          </div>
-        </el-card>
-      </div>
-    </div>
+    </el-card>
 
-    <!-- Middle: Task Table -->
-    <div class="opt-middle">
-      <el-card shadow="never">
-        <template #header>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span>优化任务</span>
-            <el-button type="primary" size="small" @click="showCreateTask = true">
-              <el-icon><Plus /></el-icon> 创建任务
-            </el-button>
-          </div>
-        </template>
-        <el-table :data="tasks" stripe v-loading="loadingTasks">
-          <el-table-column prop="id" label="任务ID" width="120" show-overflow-tooltip />
-          <el-table-column prop="status" label="状态" width="100">
-            <template #default="{ row }"><StatusTag :status="row.status" /></template>
-          </el-table-column>
-          <el-table-column prop="current_iteration" label="当前迭代" width="100" />
-          <el-table-column prop="max_iterations" label="总迭代" width="100" />
-          <el-table-column prop="best_score" label="最佳分数" width="120">
-            <template #default="{ row }">{{ row.best_score?.toFixed(2) || '-' }}</template>
-          </el-table-column>
-          <el-table-column label="进度" min-width="160">
-            <template #default="{ row }">
-              <el-progress
-                :percentage="Math.round((row.current_iteration / row.max_iterations) * 100)"
-                :status="row.status === 'completed' ? 'success' : row.status === 'running' ? undefined : 'exception'"
-              />
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="160">
-            <template #default="{ row }">
-              <el-button v-if="row.status === 'running'" type="danger" size="small" @click="handleStop(row)">
-                停止
-              </el-button>
-              <el-button size="small" @click="viewReport(row)">报告</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-card>
-    </div>
-
-    <!-- Bottom: Report Comparison -->
-    <div class="opt-bottom">
-      <el-card shadow="never">
-        <template #header>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span>优化前后对比</span>
-            <el-select v-model="selectedReportId" placeholder="选择报告" style="width: 300px" @change="loadReport" filterable>
-              <el-option
-                v-for="r in reports"
-                :key="r.id"
-                :label="`${r.task_id} - ${formatDate(r.created_at)}`"
-                :value="r.id"
-              />
-            </el-select>
-          </div>
-        </template>
-        <v-chart v-if="report" class="compare-chart" :option="compareOption" autoresize />
-        <el-empty v-else description="暂无对比数据，请选择报告" :image-size="60" />
-      </el-card>
-    </div>
-
-    <!-- Create Task Dialog -->
-    <el-dialog v-model="showCreateTask" title="创建优化任务" width="520px" destroy-on-close>
-      <el-form :model="taskForm" label-position="top">
-        <el-form-item label="最大迭代次数">
-          <el-input-number v-model="taskForm.max_iterations" :min="10" :max="10000" :step="10" />
-        </el-form-item>
-        <el-form-item>
-          <template #label>
-            <span>评估权重 (总计: {{ weightSum }}%)</span>
+    <el-row :gutter="20" style="margin-top: 20px;">
+      <el-col :span="12">
+        <el-card>
+          <template #header>
+            <span>评估结果</span>
           </template>
-          <div class="weight-inputs">
-            <div class="weight-item">
-              <span>多样性</span>
-              <el-slider v-model="taskForm.weights.diversity" :min="0" :max="100" show-input :disabled="weightLocked" />
+
+          <div v-if="evaluation" class="evaluation-result">
+            <div style="text-align: right; margin-bottom: 10px;">
+              <el-button size="small" type="danger" @click="deleteEvaluation">删除评估</el-button>
             </div>
-            <div class="weight-item">
-              <span>挑战性</span>
-              <el-slider v-model="taskForm.weights.challenge" :min="0" :max="100" show-input :disabled="weightLocked" />
+            <div ref="radarChartRef" style="height: 300px;"></div>
+            <div class="total-score">
+              <span>总分:</span>
+              <span class="score">{{ evaluation.total_score }}</span>
             </div>
-            <div class="weight-item">
-              <span>真实性</span>
-              <el-slider v-model="taskForm.weights.realism" :min="0" :max="100" show-input :disabled="weightLocked" />
-            </div>
-            <div class="weight-item">
-              <span>有效性</span>
-              <el-slider v-model="taskForm.weights.effectiveness" :min="0" :max="100" show-input :disabled="weightLocked" />
-            </div>
-          </div>
-          <div v-if="weightSum !== 100" style="margin-top:8px;color:var(--danger);font-size:12px">
-            权重总计需为 100%，当前: {{ weightSum }}%
-          </div>
-        </el-form-item>
-        <el-form-item label="参数搜索空间">
-          <div class="param-space-inputs">
-            <div class="param-item">
-              <span>风速 (m/s)</span>
-              <el-input v-model="taskForm.param_space.wind_speed" placeholder="例: [0, 50]" />
-            </div>
-            <div class="param-item">
-              <span>风向 (°)</span>
-              <el-input v-model="taskForm.param_space.wind_direction" placeholder="例: [0, 360]" />
-            </div>
-            <div class="param-item">
-              <span>障碍物数</span>
-              <el-input v-model="taskForm.param_space.obstacle_count" placeholder="例: [0, 100]" />
+            <div class="suggestions">
+              <h4>优化建议</h4>
+              <ul>
+                <li v-for="(suggestion, index) in evaluation.suggestions" :key="index">
+                  {{ suggestion }}
+                </li>
+              </ul>
             </div>
           </div>
-        </el-form-item>
-      </el-form>
+          <el-empty v-else description="请选择环境进行评估" />
+        </el-card>
+      </el-col>
+
+      <el-col :span="12">
+        <el-card>
+          <template #header>
+            <span>优化历史</span>
+          </template>
+
+          <el-table :data="optimizationTasks" style="width: 100%">
+            <el-table-column prop="status" label="状态">
+              <template #default="{ row }">
+                <el-tag :type="getTaskStatusType(row.status)">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="current_iteration" label="进度">
+              <template #default="{ row }">
+                {{ row.current_iteration }}/{{ row.max_iterations }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="best_score" label="最优分数" />
+            <el-table-column label="操作">
+              <template #default="{ row }">
+                <el-button size="small" @click="viewTask(row)">查看</el-button>
+                <el-button
+                  v-if="row.status === 'running'"
+                  size="small"
+                  type="danger"
+                  @click="stopTask(row)"
+                >
+                  停止
+                </el-button>
+                <el-button
+                  v-if="row.status !== 'running'"
+                  size="small"
+                  type="danger"
+                  @click="deleteTask(row)"
+                >
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="optimizationTasks.length === 0" description="暂无优化任务" />
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-dialog v-model="showCreateTaskDialog" title="智能优化" width="600px">
+      <el-tabs v-model="optimizeMode">
+        <el-tab-pane label="全自动优化" name="auto">
+          <el-alert type="success" :closable="false" show-icon style="margin-bottom: 20px;">
+            <template #title>智能优化</template>
+            <div style="margin-top: 10px;">
+              系统将自动分析当前环境配置，根据评估分数智能调整参数，寻找最优配置。无需手动设置参数范围。
+            </div>
+          </el-alert>
+          <el-form :model="taskForm" label-width="120px">
+            <el-form-item label="迭代次数">
+              <el-input-number v-model="taskForm.max_iterations" :min="5" :max="50" />
+              <span style="margin-left: 10px; color: #666;">建议 10-20 次</span>
+            </el-form-item>
+          </el-form>
+        </el-tab-pane>
+
+        <el-tab-pane label="手动配置" name="manual">
+          <el-form :model="taskForm" label-width="120px">
+            <el-form-item label="最大迭代次数">
+              <el-input-number v-model="taskForm.max_iterations" :min="1" :max="100" />
+            </el-form-item>
+
+            <el-divider content-position="left">要优化的环境参数</el-divider>
+            <el-form-item label="风速范围">
+              <el-col :span="10">
+                <el-input-number v-model="taskForm.param_space.wind_speed[0]" :min="0" :max="50" placeholder="最小值" />
+              </el-col>
+              <el-col :span="4" style="text-align: center">~</el-col>
+              <el-col :span="10">
+                <el-input-number v-model="taskForm.param_space.wind_speed[1]" :min="0" :max="50" placeholder="最大值" />
+              </el-col>
+            </el-form-item>
+            <el-form-item label="障碍物数量范围">
+              <el-col :span="10">
+                <el-input-number v-model="taskForm.param_space.obstacle_count[0]" :min="0" :max="50" placeholder="最小值" />
+              </el-col>
+              <el-col :span="4" style="text-align: center">~</el-col>
+              <el-col :span="10">
+                <el-input-number v-model="taskForm.param_space.obstacle_count[1]" :min="0" :max="50" placeholder="最大值" />
+              </el-col>
+            </el-form-item>
+            <el-form-item label="风向范围">
+              <el-col :span="10">
+                <el-input-number v-model="taskForm.param_space.wind_direction[0]" :min="0" :max="360" placeholder="最小值" />
+              </el-col>
+              <el-col :span="4" style="text-align: center">~</el-col>
+              <el-col :span="10">
+                <el-input-number v-model="taskForm.param_space.wind_direction[1]" :min="0" :max="360" placeholder="最大值" />
+              </el-col>
+            </el-form-item>
+
+            <el-divider content-position="left">评估维度权重</el-divider>
+            <el-form-item label="多样性权重">
+              <el-slider v-model="taskForm.weights.diversity" :min="0" :max="1" :step="0.05" show-input />
+            </el-form-item>
+            <el-form-item label="挑战性权重">
+              <el-slider v-model="taskForm.weights.challenge" :min="0" :max="1" :step="0.05" show-input />
+            </el-form-item>
+            <el-form-item label="真实性权重">
+              <el-slider v-model="taskForm.weights.realism" :min="0" :max="1" :step="0.05" show-input />
+            </el-form-item>
+            <el-form-item label="有效性权重">
+              <el-slider v-model="taskForm.weights.effectiveness" :min="0" :max="1" :step="0.05" show-input />
+            </el-form-item>
+          </el-form>
+        </el-tab-pane>
+      </el-tabs>
+
       <template #footer>
-        <el-button @click="showCreateTask = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="creatingTask"
-          :disabled="weightSum !== 100"
-          @click="handleCreateTask"
-        >创建</el-button>
+        <el-button @click="showCreateTaskDialog = false">取消</el-button>
+        <el-button v-if="optimizeMode === 'auto'" type="primary" @click="autoOptimize" :loading="optimizing">
+          开始优化
+        </el-button>
+        <el-button v-else type="primary" @click="createTask">
+          创建任务
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 任务详情弹窗 -->
+    <el-dialog v-model="showTaskDetail" title="优化任务详情" width="600px">
+      <template v-if="selectedTask">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="任务ID">{{ selectedTask.id }}</el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="getTaskStatusType(selectedTask.status)">{{ selectedTask.status }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="进度">{{ selectedTask.current_iteration }}/{{ selectedTask.max_iterations }}</el-descriptions-item>
+          <el-descriptions-item label="最优分数">{{ selectedTask.best_score }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ selectedTask.created_at }}</el-descriptions-item>
+        </el-descriptions>
+
+        <div v-if="selectedTask.best_params" style="margin-top: 20px;">
+          <h4>最优参数</h4>
+          <el-table :data="Object.entries(selectedTask.best_params).map(([key, value]) => ({ param: key, value }))" border size="small">
+            <el-table-column prop="param" label="参数名" />
+            <el-table-column prop="value" label="值" />
+          </el-table>
+        </div>
+
+        <div v-if="selectedTask.param_space" style="margin-top: 20px;">
+          <h4>参数空间</h4>
+          <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 12px;">{{ JSON.stringify(selectedTask.param_space, null, 2) }}</pre>
+        </div>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
+import * as echarts from 'echarts'
+import api from '@/api'
+import { useProjectStore } from '@/stores/project'
 import { ElMessage } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
-import VChart from 'vue-echarts'
-import { use } from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
-import { RadarChart, BarChart } from 'echarts/charts'
-import { RadarComponent, GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
-import { useProjectStore } from '../stores/project'
-import {
-  getOptimizationTasks,
-  createOptimizationTask,
-  stopOptimizationTask,
-  getOptimizationReport,
-  getOptimizationReports
-} from '../api/optimization'
-import { evaluateEnv } from '../api/optimization'
-import StatusTag from '../components/common/StatusTag.vue'
-import type { OptimizationTask, OptimizationReport } from '../types'
-
-use([CanvasRenderer, RadarChart, BarChart, RadarComponent, GridComponent, TooltipComponent, LegendComponent])
 
 const projectStore = useProjectStore()
-const tasks = ref<OptimizationTask[]>([])
-const reports = ref<OptimizationReport[]>([])
-const report = ref<OptimizationReport | null>(null)
-const selectedReportId = ref('')
-const showCreateTask = ref(false)
-const creatingTask = ref(false)
-const loadingTasks = ref(false)
+const radarChartRef = ref()
+const evaluation = ref<any>(null)
+const optimizationTasks = ref<any[]>([])
+const evaluating = ref(false)
+const optimizing = ref(false)
+const showCreateTaskDialog = ref(false)
+const envs = ref<any[]>([])
+const selectedEnvId = ref('')
+const optimizeMode = ref('auto')
+const showTaskDetail = ref(false)
+const selectedTask = ref<any>(null)
 
-const scores = reactive({
-  diversity: 72,
-  challenge: 65,
-  realism: 80,
-  effectiveness: 70
-})
-const totalScore = computed(() => (scores.diversity + scores.challenge + scores.realism + scores.effectiveness) / 4)
-
-const weightLocked = ref(false)
-
-const taskForm = reactive({
-  max_iterations: 100,
-  weights: { diversity: 25, challenge: 25, realism: 25, effectiveness: 25 },
+const taskForm = ref({
+  max_iterations: 10,
   param_space: {
-    wind_speed: '[0, 50]',
-    wind_direction: '[0, 360]',
-    obstacle_count: '[0, 100]'
-  }
-})
-
-const weightSum = computed(() =>
-  taskForm.weights.diversity + taskForm.weights.challenge + taskForm.weights.realism + taskForm.weights.effectiveness
-)
-
-const radarOption = computed(() => ({
-  radar: {
-    indicator: [
-      { name: '多样性', max: 100 },
-      { name: '挑战性', max: 100 },
-      { name: '真实性', max: 100 },
-      { name: '有效性', max: 100 }
-    ]
+    wind_speed: [0, 50],
+    obstacle_count: [0, 50],
+    wind_direction: [0, 360],
   },
-  series: [{
-    type: 'radar',
-    data: [{
-      value: [scores.diversity, scores.challenge, scores.realism, scores.effectiveness],
-      name: '当前评估',
-      areaStyle: { color: 'rgba(0,102,204,0.15)' },
-      lineStyle: { color: '#0066cc', width: 2 },
-      itemStyle: { color: '#0066cc' }
-    }]
-  }]
-}))
-
-const compareOption = computed(() => {
-  if (!report.value) return {}
-  return {
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['优化前', '优化后'] },
-    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'category', data: ['多样性', '挑战性', '真实性', '有效性'] },
-    yAxis: { type: 'value', max: 100 },
-    series: [
-      {
-        name: '优化前',
-        type: 'bar',
-        data: [
-          report.value.before_scores?.diversity || 0,
-          report.value.before_scores?.challenge || 0,
-          report.value.before_scores?.realism || 0,
-          report.value.before_scores?.effectiveness || 0
-        ],
-        color: '#d2d2d7'
-      },
-      {
-        name: '优化后',
-        type: 'bar',
-        data: [
-          report.value.after_scores?.diversity || 0,
-          report.value.after_scores?.challenge || 0,
-          report.value.after_scores?.realism || 0,
-          report.value.after_scores?.effectiveness || 0
-        ],
-        color: '#0066cc'
-      }
-    ]
+  weights: {
+    diversity: 0.25,
+    challenge: 0.25,
+    realism: 0.25,
+    effectiveness: 0.25,
   }
 })
 
-async function loadTasks() {
-  if (!projectStore.currentProject) return
-  loadingTasks.value = true
-  try {
-    const res = await getOptimizationTasks(projectStore.currentProject.id)
-    tasks.value = res.data.data || []
-  } catch { tasks.value = [] }
-  finally { loadingTasks.value = false }
+const getTaskStatusType = (status: string) => {
+  const map: Record<string, string> = {
+    pending: 'info',
+    running: 'warning',
+    completed: 'success',
+    failed: 'danger'
+  }
+  return map[status] || 'info'
 }
 
-async function loadReports() {
+onMounted(async () => {
+  await loadEnvs()
+  await loadOptimizationTasks()
+})
+
+const loadEnvs = async () => {
   if (!projectStore.currentProject) return
-  try {
-    const res = await getOptimizationReports(projectStore.currentProject.id)
-    reports.value = res.data.data || []
-  } catch { reports.value = [] }
+  const response = await api.get('/api/envs', {
+    params: { project_id: projectStore.currentProject.id }
+  })
+  envs.value = response.data.data.filter((e: any) => e.status === 'active')
 }
 
-async function loadReport() {
-  if (!selectedReportId.value) return
+const evaluateEnv = async () => {
+  if (!selectedEnvId.value) {
+    ElMessage.warning('请先选择环境')
+    return
+  }
+
+  evaluating.value = true
   try {
-    const task = tasks.value.find(t => t.id === selectedReportId.value || t.report_id === selectedReportId.value)
-    if (task) {
-      const res = await getOptimizationReport(task.id)
-      report.value = res.data.data || null
+    await api.post(`/api/envs/${selectedEnvId.value}/evaluate`, {})
+    ElMessage.success('评估任务已提交')
+    setTimeout(async () => {
+      await loadEvaluation(selectedEnvId.value)
+    }, 2000)
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '评估失败')
+  } finally {
+    evaluating.value = false
+  }
+}
+
+const loadEvaluation = async (envId: string) => {
+  try {
+    const response = await api.get(`/api/envs/${envId}/evaluations`)
+    if (response.data.data && response.data.data.length > 0) {
+      evaluation.value = response.data.data[0]
+      await nextTick()
+      initRadarChart()
     } else {
-      // Try loading report directly by matching task IDs
-      for (const t of tasks.value) {
-        try {
-          const res = await getOptimizationReport(t.id)
-          if (res.data.data?.id === selectedReportId.value) {
-            report.value = res.data.data
-            return
-          }
-        } catch {}
-      }
+      evaluation.value = null
     }
-  } catch { ElMessage.error('获取报告失败') }
+  } catch (error) {
+    console.error('Load evaluation error')
+  }
 }
 
-async function handleCreateTask() {
+const initRadarChart = () => {
+  if (!radarChartRef.value || !evaluation.value) return
+
+  const chart = echarts.init(radarChartRef.value)
+  chart.setOption({
+    title: { text: '环境质量评估', left: 'center' },
+    radar: {
+      indicator: [
+        { name: '多样性', max: 100 },
+        { name: '挑战性', max: 100 },
+        { name: '真实性', max: 100 },
+        { name: '有效性', max: 100 },
+      ]
+    },
+    series: [{
+      type: 'radar',
+      data: [{
+        value: [
+          evaluation.value.diversity_score,
+          evaluation.value.challenge_score,
+          evaluation.value.realism_score,
+          evaluation.value.effectiveness_score,
+        ],
+        name: '评估分数'
+      }]
+    }]
+  })
+}
+
+const loadOptimizationTasks = async () => {
+  if (!projectStore.currentProject) return
+  const response = await api.get('/api/optimization-tasks', {
+    params: { project_id: projectStore.currentProject.id }
+  })
+  optimizationTasks.value = response.data.data
+}
+
+const createTask = async () => {
   if (!projectStore.currentProject) {
     ElMessage.warning('请先选择项目')
     return
   }
-  if (weightSum.value !== 100) {
-    ElMessage.warning('权重总计需为 100%')
+
+  try {
+    await api.post('/api/optimization-tasks', {
+      project_id: projectStore.currentProject.id,
+      max_iterations: taskForm.value.max_iterations,
+      param_space: taskForm.value.param_space,
+      weights: taskForm.value.weights,
+    })
+
+    showCreateTaskDialog.value = false
+    ElMessage.success('优化任务已创建')
+    await loadOptimizationTasks()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '创建失败')
+  }
+}
+
+const autoOptimize = async () => {
+  if (!projectStore.currentProject) {
+    ElMessage.warning('请先选择项目')
     return
   }
-  creatingTask.value = true
+
+  optimizing.value = true
   try {
-    // Parse param_space from text inputs
-    const paramSpace: Record<string, number[]> = {}
-    for (const [key, val] of Object.entries(taskForm.param_space)) {
-      try {
-        paramSpace[key] = JSON.parse(val as string)
-      } catch {
-        ElMessage.error(`参数 "${key}" 格式错误，请使用 [min, max] 格式`)
-        creatingTask.value = false
-        return
-      }
-    }
-
-    const normalizedWeights: Record<string, number> = {}
-    for (const [k, v] of Object.entries(taskForm.weights)) {
-      normalizedWeights[k] = v / 100
-    }
-
-    await createOptimizationTask(projectStore.currentProject.id, {
-      param_space: paramSpace,
-      weights: normalizedWeights,
-      max_iterations: taskForm.max_iterations
+    await api.post('/api/optimization-tasks/auto', {
+      project_id: projectStore.currentProject.id,
+      max_iterations: taskForm.value.max_iterations,
     })
-    ElMessage.success('任务创建成功')
-    showCreateTask.value = false
-    await loadTasks()
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '创建失败')
-  } finally { creatingTask.value = false }
+
+    showCreateTaskDialog.value = false
+    ElMessage.success('智能优化已启动，系统将自动寻找最优配置')
+    await loadOptimizationTasks()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '优化失败')
+  } finally {
+    optimizing.value = false
+  }
 }
 
-async function handleStop(task: OptimizationTask) {
+const viewTask = async (task: any) => {
   try {
-    await stopOptimizationTask(task.id)
+    const response = await api.get(`/api/optimization-tasks/${task.id}`)
+    selectedTask.value = response.data.data
+    showTaskDetail.value = true
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '获取任务详情失败')
+  }
+}
+
+const stopTask = async (task: any) => {
+  try {
+    await api.post(`/api/optimization-tasks/${task.id}/stop`)
     ElMessage.success('任务已停止')
-    await loadTasks()
-  } catch { ElMessage.error('停止失败') }
+    await loadOptimizationTasks()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '停止失败')
+  }
 }
 
-async function viewReport(task: OptimizationTask) {
+const deleteTask = async (task: any) => {
   try {
-    const res = await getOptimizationReport(task.id)
-    report.value = res.data.data || null
-  } catch { ElMessage.error('获取报告失败') }
+    await api.delete(`/api/optimization-tasks/${task.id}`)
+    ElMessage.success('任务已删除')
+    await loadOptimizationTasks()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '删除失败')
+  }
 }
 
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleString('zh-CN')
+const deleteEvaluation = async () => {
+  if (!evaluation.value || !selectedEnvId.value) return
+  try {
+    await api.delete(`/api/envs/${selectedEnvId.value}/evaluations/${evaluation.value.id}`)
+    ElMessage.success('评估已删除')
+    evaluation.value = null
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '删除失败')
+  }
 }
-
-onMounted(() => {
-  loadTasks()
-  loadReports()
-})
 </script>
 
 <style scoped>
-.optimization { max-width: 1200px; }
-.page-header { margin-bottom: 24px; }
-.page-title { font-size: 28px; font-weight: 600; letter-spacing: -0.03em; margin: 0 0 4px; }
-.page-desc { font-size: 15px; color: var(--text-secondary); margin: 0; }
-.opt-top { display: flex; gap: 16px; margin-bottom: 16px; }
-.radar-section { flex: 1; }
-.score-section { width: 320px; }
-.radar-chart { width: 100%; height: 300px; }
-.score-display { text-align: center; padding: 20px 0 16px; }
-.total-score { font-size: 48px; font-weight: 700; letter-spacing: -0.04em; color: var(--primary); }
-.score-label { font-size: 16px; color: var(--text-muted); }
-.score-breakdown { display: flex; flex-direction: column; gap: 12px; }
-.score-item { display: flex; align-items: center; gap: 12px; }
-.score-name { font-size: 13px; min-width: 50px; color: var(--text-secondary); }
-.opt-middle { margin-bottom: 16px; }
-.compare-chart { width: 100%; height: 300px; }
-.weight-inputs { display: flex; flex-direction: column; gap: 12px; width: 100%; }
-.weight-item { display: flex; align-items: center; gap: 12px; }
-.weight-item span { min-width: 50px; font-size: 13px; }
-.weight-item .el-slider { flex: 1; }
-.param-space-inputs { display: flex; flex-direction: column; gap: 10px; width: 100%; }
-.param-item { display: flex; align-items: center; gap: 12px; }
-.param-item span { min-width: 80px; font-size: 13px; }
-.param-item .el-input { flex: 1; }
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.action-bar {
+  margin-bottom: 20px;
+}
+
+.action-bar-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.action-left {
+  display: flex;
+  align-items: center;
+}
+
+.action-right {
+  display: flex;
+  gap: 10px;
+}
+
+.total-score {
+  text-align: center;
+  margin: 20px 0;
+  font-size: 18px;
+}
+
+.score {
+  font-size: 36px;
+  font-weight: bold;
+  color: #409eff;
+  margin-left: 10px;
+}
+
+.suggestions {
+  margin-top: 20px;
+}
+
+.suggestions h4 {
+  margin-bottom: 10px;
+}
+
+.suggestions ul {
+  padding-left: 20px;
+}
+
+.suggestions li {
+  margin-bottom: 5px;
+  color: #666;
+}
+
+.auto-optimize-info {
+  margin-bottom: 20px;
+}
 </style>
