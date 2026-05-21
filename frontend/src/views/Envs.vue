@@ -1,7 +1,7 @@
 <template>
   <div class="envs-page">
     <el-row :gutter="20">
-      <el-col :span="12">
+      <el-col :span="14">
         <el-card>
           <template #header>
             <div class="card-header">
@@ -110,7 +110,7 @@
         </el-card>
       </el-col>
 
-      <el-col :span="12">
+      <el-col :span="10">
         <el-card class="preview-card">
           <template #header>
             <span>三维预览</span>

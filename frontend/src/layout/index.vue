@@ -31,11 +31,11 @@
       </div>
     </el-header>
     <el-container>
-      <el-aside width="200px" class="layout-aside">
+      <el-aside width="240px" class="layout-aside">
         <div class="project-section">
           <div class="project-header">
             <span>项目</span>
-            <div>
+            <div class="project-actions">
               <el-button type="primary" size="small" @click="showCreateProjectDialog = true">
                 新建
               </el-button>
@@ -62,6 +62,9 @@
               :value="project"
             />
           </el-select>
+          <div v-if="projectStore.currentProject" class="project-info">
+            <p>{{ projectStore.currentProject.description || '暂无描述' }}</p>
+          </div>
         </div>
       </el-aside>
       <el-main class="layout-main">
@@ -163,6 +166,7 @@ const deleteProject = async () => {
   align-items: center;
   border-bottom: 1px solid #e6e6e6;
   background: #fff;
+  padding: 0 12px;
 }
 
 .header-left {
@@ -174,6 +178,7 @@ const deleteProject = async () => {
   font-size: 18px;
   font-weight: bold;
   margin-right: 40px;
+  color: #1a1a1a;
 }
 
 .header-menu {
@@ -184,27 +189,49 @@ const deleteProject = async () => {
   display: flex;
   align-items: center;
   cursor: pointer;
+  color: #606266;
 }
 
 .layout-aside {
-  background: #f5f5f5;
+  background: #fff;
   border-right: 1px solid #e6e6e6;
 }
 
 .project-section {
-  padding: 16px;
+  padding: 12px;
 }
 
 .project-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
-  font-weight: bold;
+  margin-bottom: 16px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.project-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.project-info {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.project-info p {
+  margin: 0;
+  font-size: 13px;
+  color: #909399;
+  line-height: 1.5;
 }
 
 .layout-main {
   background: #f0f2f5;
-  padding: 20px;
+  padding: 12px;
+  overflow: auto;
 }
 </style>

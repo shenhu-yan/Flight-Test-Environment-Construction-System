@@ -1,34 +1,46 @@
 <template>
   <div class="login-container">
-    <el-card class="login-card">
-      <template #header>
-        <h2>Flight Test Environment System</h2>
-      </template>
+    <div class="login-box">
+      <div class="login-header">
+        <h1>Flight Test System</h1>
+        <p>飞行试验环境构建系统</p>
+      </div>
       <el-form
         ref="formRef"
         :model="form"
         :rules="rules"
-        label-width="80px"
         @submit.prevent="handleLogin"
       >
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" placeholder="请输入用户名" />
+        <el-form-item prop="username">
+          <el-input
+            v-model="form.username"
+            placeholder="用户名"
+            size="large"
+            :prefix-icon="User"
+          />
         </el-form-item>
-        <el-form-item label="密码" prop="password">
+        <el-form-item prop="password">
           <el-input
             v-model="form.password"
             type="password"
-            placeholder="请输入密码"
+            placeholder="密码"
+            size="large"
+            :prefix-icon="Lock"
             show-password
+            @keyup.enter="handleLogin"
           />
         </el-form-item>
-        <el-form-item>
-          <el-button type="primary" native-type="submit" :loading="loading">
-            登录
-          </el-button>
-        </el-form-item>
+        <el-button
+          type="primary"
+          native-type="submit"
+          :loading="loading"
+          size="large"
+          class="login-btn"
+        >
+          登录
+        </el-button>
       </el-form>
-    </el-card>
+    </div>
   </div>
 </template>
 
@@ -37,6 +49,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
+import { User, Lock } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -73,11 +86,50 @@ const handleLogin = async () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  background: #ffffff;
 }
 
-.login-card {
-  width: 400px;
+.login-box {
+  width: 380px;
+  padding: 40px;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+.login-header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.login-header h1 {
+  font-size: 24px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0 0 8px 0;
+}
+
+.login-header p {
+  font-size: 14px;
+  color: #999;
+  margin: 0;
+}
+
+.login-btn {
+  width: 100%;
+  margin-top: 8px;
+}
+
+:deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px #dcdfe6 inset;
+}
+
+:deep(.el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px #c0c4cc inset;
+}
+
+:deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px #409eff inset;
 }
 </style>
