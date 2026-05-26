@@ -150,6 +150,12 @@
                   {{ trainingProgress }}%
                 </span>
                 <el-button
+                  size="small"
+                  @click.stop="exportEnvJson(env)"
+                >
+                  导出
+                </el-button>
+                <el-button
                   type="danger"
                   size="small"
                   @click.stop="deleteEnv(env)"
@@ -400,6 +406,26 @@ const deleteEnv = async (env: any) => {
     if (error !== 'cancel') {
       ElMessage.error('删除失败')
     }
+  }
+}
+
+const exportEnvJson = async (env: any) => {
+  try {
+    const response = await api.get(`/api/envs/${env.id}/export-json`, {
+      responseType: 'blob'
+    })
+    const blob = new Blob([response.data], { type: 'application/json' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${env.name}.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '导出失败')
   }
 }
 

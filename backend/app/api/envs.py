@@ -311,6 +311,46 @@ async def export_env(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Environment file not found")
 
 
+@router.get("/{env_id}/export-json")
+async def export_env_json(
+    env_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """导出环境配置为JSON格式"""
+    from fastapi.responses import Response
+
+    result = await db.execute(
+        text("SELECT id, project_id, name, config, status, created_at FROM envs WHERE id = :id"),
+        {"id": env_id}
+    )
+    env = result.fetchone()
+    if not env:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Environment not found")
+
+    config = json.loads(env[3]) if isinstance(env[3], str) else env[3]
+
+    export_data = {
+        "version": "1.0",
+        "exported_at": str(env[5]) if env[5] else None,
+        "environment": {
+            "id": env[0],
+            "project_id": env[1],
+            "name": env[2],
+            "status": env[4],
+        },
+        "config": config
+    }
+
+    json_content = json.dumps(export_data, indent=2, ensure_ascii=False)
+
+    return Response(
+        content=json_content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{env[2]}.json"'}
+    )
+
+
 @router.get("/{env_id}/preview")
 async def get_preview(
     env_id: str,
