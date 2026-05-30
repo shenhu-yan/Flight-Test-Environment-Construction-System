@@ -45,6 +45,30 @@
       <el-col :span="6">
         <el-card>
           <template #header>
+            <span>手动调整</span>
+          </template>
+          <el-form v-if="currentEnv" label-position="top" size="small">
+            <el-form-item label="风速 (m/s)">
+              <el-slider v-model="adjustForm.wind_speed" :min="0" :max="50" :step="1" show-input input-size="small" />
+            </el-form-item>
+            <el-form-item label="风向 (°)">
+              <el-slider v-model="adjustForm.wind_direction" :min="0" :max="360" :step="10" show-input input-size="small" />
+            </el-form-item>
+            <el-form-item label="障碍物数量">
+              <el-input-number v-model="adjustForm.obstacle_count" :min="0" :max="50" />
+            </el-form-item>
+            <el-form-item label="着陆区宽度 (m)">
+              <el-slider v-model="adjustForm.landing_width" :min="20" :max="300" :step="10" show-input input-size="small" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="submitAdjust" :disabled="!selectedEnvId">应用调整</el-button>
+            </el-form-item>
+          </el-form>
+          <el-empty v-else description="请选择环境" />
+        </el-card>
+
+        <el-card style="margin-top: 20px">
+          <template #header>
             <span>调整历史</span>
           </template>
           <el-timeline>
@@ -83,6 +107,36 @@ const chart = ref<echarts.ECharts | null>(null)
 const wsConnected = ref(false)
 const currentEnv = ref<any>(null)
 const envs = ref<any[]>([])
+
+// 手动调整表单
+const adjustForm = ref({
+  wind_speed: 5,
+  wind_direction: 90,
+  obstacle_count: 0,
+  landing_width: 100,
+})
+
+const submitAdjust = async () => {
+  if (!selectedEnvId.value) return
+  try {
+    await api.post(`/api/envs/${selectedEnvId.value}/adjust`, {
+      params: {
+        'atmosphere.wind_speed': adjustForm.value.wind_speed,
+        'atmosphere.wind_direction': adjustForm.value.wind_direction,
+        'obstacles.count': adjustForm.value.obstacle_count,
+        'landing.width': adjustForm.value.landing_width,
+      },
+      reason: '手动调整'
+    })
+    ElMessage.success('调整已应用')
+    await loadAdjustmentHistory(selectedEnvId.value)
+    // 刷新环境参数显示
+    const envResp = await api.get(`/api/envs/${selectedEnvId.value}`)
+    currentEnv.value = envResp.data.data
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '调整失败')
+  }
+}
 const selectedEnvId = ref('')
 const adjustmentHistory = ref<any[]>([])
 
@@ -94,12 +148,19 @@ const metricData = {
 }
 
 let ws: WebSocket | null = null
+let metricsRefreshInterval: number | null = null
 
 onMounted(async () => {
   await loadEnvs()
   await nextTick()
   initChart()
   connectWebSocket()
+  // 定时刷新训练指标
+  metricsRefreshInterval = window.setInterval(async () => {
+    if (selectedEnvId.value) {
+      await loadTrainingMetrics(selectedEnvId.value)
+    }
+  }, 2000)  // 每2秒刷新一次
 })
 
 onUnmounted(() => {
@@ -108,6 +169,9 @@ onUnmounted(() => {
   }
   if (chart.value) {
     chart.value.dispose()
+  }
+  if (metricsRefreshInterval) {
+    clearInterval(metricsRefreshInterval)
   }
 })
 
@@ -124,6 +188,15 @@ const onEnvChange = async (envId: string) => {
     // 加载环境详情
     const envResponse = await api.get(`/api/envs/${envId}`)
     currentEnv.value = envResponse.data.data
+
+    // 填充手动调整表单
+    const cfg = currentEnv.value?.config
+    if (cfg) {
+      adjustForm.value.wind_speed = cfg.atmosphere?.wind_speed ?? 5
+      adjustForm.value.wind_direction = cfg.atmosphere?.wind_direction ?? 90
+      adjustForm.value.obstacle_count = cfg.obstacles?.count ?? 0
+      adjustForm.value.landing_width = cfg.landing?.width ?? 100
+    }
 
     // 加载历史训练指标
     await loadTrainingMetrics(envId)
@@ -163,13 +236,24 @@ const loadTrainingMetrics = async (envId: string) => {
   }
 }
 
+const movingAverage = (data: number[], window: number): number[] => {
+  return data.map((_, i) => {
+    const start = Math.max(0, i - window + 1)
+    const slice = data.slice(start, i + 1)
+    return slice.reduce((a, b) => a + b, 0) / slice.length
+  })
+}
+
 const updateChartFromData = () => {
   if (!chart.value) return
+
+  const smoothedRewards = movingAverage(metricData.rewards, 10)
 
   chart.value.setOption({
     xAxis: { data: metricData.steps },
     series: [
       { data: metricData.rewards },
+      { data: smoothedRewards },
       { data: metricData.successRates },
       { data: metricData.convergenceSpeeds }
     ]
@@ -182,7 +266,7 @@ const initChart = () => {
   chart.value.setOption({
     title: { text: '训练指标曲线' },
     tooltip: { trigger: 'axis' },
-    legend: { data: ['奖励值', '成功率', '收敛速度'] },
+    legend: { data: ['奖励值(原始)', '奖励值(平滑)', '成功率', '收敛速度'] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: {
       type: 'category',
@@ -195,11 +279,22 @@ const initChart = () => {
     ],
     series: [
       {
-        name: '奖励值',
+        name: '奖励值(原始)',
         type: 'line',
         yAxisIndex: 0,
         data: [],
-        smooth: true
+        smooth: false,
+        lineStyle: { opacity: 0.3 },
+        itemStyle: { opacity: 0.3 },
+        symbol: 'none'
+      },
+      {
+        name: '奖励值(平滑)',
+        type: 'line',
+        yAxisIndex: 0,
+        data: [],
+        smooth: true,
+        lineStyle: { width: 3 }
       },
       {
         name: '成功率',
@@ -272,6 +367,7 @@ const updateChart = (data: any) => {
     xAxis: { data: metricData.steps },
     series: [
       { data: metricData.rewards },
+      { data: movingAverage(metricData.rewards, 10) },
       { data: metricData.successRates },
       { data: metricData.convergenceSpeeds }
     ]

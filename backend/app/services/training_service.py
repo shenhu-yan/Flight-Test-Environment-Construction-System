@@ -1,13 +1,14 @@
 """
-训练服务 - 在服务器端执行训练任务
+训练服务 - 使用真正的强化学习训练
 """
 
 import asyncio
 import json
-import time
-import random
 import math
+import uuid
+import numpy as np
 from typing import Optional
+from datetime import datetime
 from sqlalchemy import text
 from app.core.database import async_session
 
@@ -24,24 +25,29 @@ class TrainingService:
         max_steps: int = 1000,
         user_id: str = None
     ) -> dict:
-        """启动训练任务"""
-        import uuid
+        """启动真正的RL训练任务"""
+        # 同一环境只允许一个训练：停掉旧的
+        for tid, t in list(self.active_trainings.items()):
+            if t["env_id"] == env_id and t["status"] == "running":
+                t["status"] = "stopped"
+
         training_id = str(uuid.uuid4())
+        n_episodes = max(300, max_steps // 5)
 
         self.active_trainings[training_id] = {
             "env_id": env_id,
             "project_id": project_id,
             "config": config,
             "max_steps": max_steps,
+            "n_episodes": n_episodes,
             "current_step": 0,
             "status": "running",
             "metrics_history": [],
             "user_id": user_id,
-            "learning_rate": 0.1,
-            "exploration_rate": 0.3,
         }
 
-        asyncio.create_task(self._run_training(training_id))
+        # 在主 event loop 中异步运行训练（不阻塞，因为训练内部有 asyncio.sleep）
+        asyncio.create_task(self._run_rl_training(training_id))
 
         return {
             "training_id": training_id,
@@ -49,157 +55,173 @@ class TrainingService:
             "max_steps": max_steps,
         }
 
-    async def _run_training(self, training_id: str):
-        """执行训练任务"""
+    async def _run_rl_training(self, training_id: str):
+        """执行真正的RL训练"""
+        from app.services.flight_env import FlightEnv, SimpleRLTrainer
+
         training = self.active_trainings.get(training_id)
         if not training:
             return
 
         env_id = training["env_id"]
         project_id = training["project_id"]
+        config = training["config"]
         max_steps = training["max_steps"]
 
-        # 初始化训练状态
-        episode_reward = 0
-        success_count = 0
-        best_reward = -float('inf')
-        consecutive_successes = 0
+        print(f"[Training] Starting RL training for env {env_id}")
 
-        # 获取环境配置中的难度系数
-        config = training["config"]
-        wind_speed = config.get("atmosphere", {}).get("wind_speed", 5)
-        obstacle_count = config.get("obstacles", {}).get("count", 0)
-        difficulty_factor = 1.0 + (wind_speed / 20) + (obstacle_count / 10)
+        try:
+            env = FlightEnv(config=config, max_steps=max_steps)
+            trainer = SimpleRLTrainer(env=env, learning_rate=0.001, gamma=0.99)
 
-        for step in range(1, max_steps + 1):
-            if training["status"] != "running":
-                break
+            n_episodes = max(300, max_steps // 5)
+            print(f"[Training] Running {n_episodes} episodes, max_steps={max_steps}")
 
-            # 模拟训练步骤 - 随着训练进行，动作质量逐渐提高
-            exploration = training["exploration_rate"] * math.exp(-step / 500)
-            if random.random() < exploration:
-                # 探索：随机动作
-                action = [random.uniform(-1, 1) for _ in range(3)]
-            else:
-                # 利用：基于经验的动作
-                noise = random.gauss(0, 0.3)
-                action = [
-                    max(-1, min(1, 0.5 + noise)),
-                    max(-1, min(1, 0.3 + noise)),
-                    max(-1, min(1, 0.2 + noise))
-                ]
+            for episode in range(n_episodes):
+                training = self.active_trainings.get(training_id)
+                if not training:
+                    print(f"[Training] Training removed, stopping")
+                    break
+                if training.get("status", "running") != "running":
+                    print(f"[Training] Status changed to {training.get('status')}, stopping")
+                    break
 
-            # 计算奖励 - 基于动作质量和环境难度
-            reward = self._calculate_reward(action, config, step, difficulty_factor)
-            episode_reward += reward
+                obs, info = env.reset()
+                obs = obs.astype(np.float32)
+                episode_reward = 0
+                done = False
+                step = 0
+                max_steps_per_episode = 200
+                min_distance = float('inf')
 
-            # 判断是否成功 - 奖励超过阈值视为成功
-            success_threshold = 0.3 / difficulty_factor
-            is_success = reward > success_threshold
+                while not done and step < max_steps_per_episode:
+                    action, action_idx = trainer._select_action(obs, info)
+                    next_obs, reward, terminated, truncated, info = env.step(action)
+                    done = terminated or truncated
+                    trainer._remember(obs.astype(np.float32), action_idx, reward,
+                                      next_obs.astype(np.float32), terminated)
+                    trainer._replay()
+                    obs = next_obs
+                    episode_reward += reward
+                    step += 1
+                    min_distance = min(min_distance, info.get("distance_to_target", 1000))
+                    await asyncio.sleep(0.002)
 
-            if is_success:
-                success_count += 1
-                consecutive_successes += 1
-            else:
-                consecutive_successes = 0
+                trainer.epsilon = max(trainer.epsilon_min, trainer.epsilon * trainer.epsilon_decay)
+                training["current_step"] = episode + 1
 
-            # 计算指标
-            success_rate = success_count / step
-            convergence_speed = min(0.2 + step * 0.002 + success_rate * 0.3, 1.0)
+                # 成功率
+                success = 1 if min_distance < 100 else 0
+                if '_total_successes' not in training:
+                    training['_total_successes'] = 0
+                    training['_total_episodes'] = 0
+                training['_total_successes'] += success
+                training['_total_episodes'] += 1
+                success_rate = training['_total_successes'] / training['_total_episodes']
 
-            # 根据连续成功次数调整学习率
-            if consecutive_successes > 5:
-                training["learning_rate"] = min(training["learning_rate"] * 1.1, 0.5)
-            elif consecutive_successes == 0 and step > 100:
-                training["learning_rate"] = max(training["learning_rate"] * 0.9, 0.01)
+                # 收敛速度
+                if '_reward_history' not in training:
+                    training['_reward_history'] = []
+                training['_reward_history'].append(episode_reward)
+                raw_conv = 0.5
+                if len(training['_reward_history']) >= 10:
+                    recent_avg = sum(training['_reward_history'][-5:]) / 5
+                    earlier_avg = sum(training['_reward_history'][-10:-5]) / 5
+                    diff = recent_avg - earlier_avg
+                    reward_std = float(np.std(training['_reward_history'])) if len(training['_reward_history']) > 1 else 1.0
+                    scale = max(reward_std * 2.0, 10.0)
+                    raw_conv = 1.0 / (1.0 + math.exp(-diff / scale))
+                if '_conv_ema' not in training:
+                    training['_conv_ema'] = 0.5
+                training['_conv_ema'] = 0.3 * raw_conv + 0.7 * training['_conv_ema']
+                convergence_speed = training['_conv_ema']
 
-            metrics = {
-                "episode_reward": round(episode_reward, 2),
-                "success_rate": round(success_rate, 4),
-                "convergence_speed": round(convergence_speed, 4),
-                "step": step,
-            }
+                metrics = {
+                    "episode_reward": round(episode_reward, 2),
+                    "success_rate": round(success_rate, 4),
+                    "convergence_speed": round(convergence_speed, 4),
+                    "step": episode + 1,
+                }
+                training["metrics_history"].append(metrics)
 
-            # 记录指标
-            training["current_step"] = step
-            training["metrics_history"].append(metrics)
-
-            # 保存到数据库
-            await self._save_metrics(env_id, metrics)
-
-            # 每10步更新一次状态
-            if step % 10 == 0:
+                # 保存到数据库（用项目的 async session）
+                await self._save_metrics(env_id, metrics)
                 await self._notify_progress(project_id, env_id, metrics)
 
-            # 模拟训练延迟
-            await asyncio.sleep(0.02)
+                # 实时策略检查：将指标送入规则引擎，自动触发环境调整
+                try:
+                    from app.services.strategy_engine import strategy_engine
+                    await strategy_engine.process_metric(project_id, env_id, {
+                        "episode_reward": episode_reward,
+                        "success_rate": success_rate,
+                        "convergence_speed": convergence_speed,
+                        "step": episode + 1,
+                    })
+                except Exception as e:
+                    print(f"[Training] Strategy engine error: {e}", flush=True)
 
-        training["status"] = "completed"
-        await self._notify_complete(project_id, env_id)
+                if (episode + 1) % 20 == 0:
+                    print(f"[Training] Ep {episode+1}/{n_episodes}: rew={episode_reward:.0f} SR={success_rate:.3f}")
 
-    def _calculate_reward(self, action: list, config: dict, step: int, difficulty_factor: float) -> float:
-        """计算奖励 - 更真实的奖励函数"""
-        # 基础奖励：动作的协调性
-        action_sum = sum(action)
-        action_variance = sum((a - action_sum/len(action))**2 for a in action) / len(action)
-        coordination_reward = 1.0 - min(action_variance, 1.0)
+                await asyncio.sleep(0.05)
 
-        # 高度奖励：保持适当高度
-        altitude_reward = 0.5 + 0.5 * math.sin(step * 0.01)
+            # 训练完成
+            training["status"] = "completed"
+            print(f"[Training] Completed: {n_episodes} episodes")
+            await self._notify_complete(project_id, env_id)
+            env.close()
 
-        # 速度奖励：适当的速度
-        speed = math.sqrt(sum(a**2 for a in action))
-        speed_reward = 1.0 - abs(speed - 0.5) * 2
-
-        # 难度惩罚：环境越难，奖励越低
-        difficulty_penalty = 1.0 / difficulty_factor
-
-        # 总奖励
-        total_reward = (coordination_reward * 0.4 + altitude_reward * 0.3 + speed_reward * 0.3) * difficulty_penalty
-
-        # 添加噪声使训练更真实
-        noise = random.gauss(0, 0.1)
-        total_reward = max(0, total_reward + noise)
-
-        return total_reward
+        except Exception as e:
+            training["status"] = "error"
+            print(f"Training error: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def _save_metrics(self, env_id: str, metrics: dict):
-        """保存指标到数据库"""
-        async with async_session() as session:
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO training_metrics (env_id, episode_reward, success_rate, convergence_speed, step, reported_at)
-                    VALUES (:env_id, :episode_reward, :success_rate, :convergence_speed, :step, NOW())
-                    """
-                ),
-                {
-                    "env_id": env_id,
-                    "episode_reward": metrics["episode_reward"],
-                    "success_rate": metrics["success_rate"],
-                    "convergence_speed": metrics["convergence_speed"],
-                    "step": metrics["step"],
-                }
-            )
-            await session.commit()
+        """保存指标到数据库 - 重试3次"""
+        from app.core.config import settings
+        import asyncpg
+        db_url = settings.DATABASE_URL.replace("+asyncpg", "")
+        for attempt in range(3):
+            try:
+                conn = await asyncpg.connect(db_url, timeout=5)
+                await conn.execute(
+                    """INSERT INTO training_metrics
+                       (env_id, episode_reward, success_rate, convergence_speed, step, reported_at)
+                       VALUES ($1, $2, $3, $4, $5, NOW())""",
+                    env_id, metrics["episode_reward"], metrics["success_rate"],
+                    metrics["convergence_speed"], metrics["step"])
+                await conn.close()
+                return  # success
+            except Exception as e:
+                if attempt < 2:
+                    await asyncio.sleep(0.5)
+                else:
+                    print(f"[Training] DB save failed after 3 attempts: {e}", flush=True)
 
     async def _notify_progress(self, project_id: str, env_id: str, metrics: dict):
         """通知前端训练进度"""
-        from app.services.ws_manager import manager
-        await manager.broadcast_metrics(project_id, {
-            "env_id": env_id,
-            "metrics": metrics,
-            "timestamp": datetime.utcnow().isoformat()
-        })
+        try:
+            from app.services.ws_manager import manager
+            await manager.broadcast_metrics(project_id, {
+                "env_id": env_id,
+                "metrics": metrics,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+        except Exception as e:
+            pass
 
     async def _notify_complete(self, project_id: str, env_id: str):
         """通知前端训练完成"""
-        from app.services.ws_manager import manager
-        await manager.broadcast_notification(project_id, {
-            "type": "info",
-            "title": "训练完成",
-            "content": f"环境 {env_id} 的训练已完成"
-        })
+        try:
+            from app.services.ws_manager import manager
+            await manager.broadcast_notification(project_id, {
+                "type": "info",
+                "title": "RL训练完成",
+                "content": f"环境 {env_id} 的强化学习训练已完成"
+            })
+        except Exception as e:
+            pass
 
     def stop_training(self, training_id: str):
         """停止训练"""
@@ -208,9 +230,23 @@ class TrainingService:
 
     def get_training_status(self, training_id: str) -> Optional[dict]:
         """获取训练状态"""
-        return self.active_trainings.get(training_id)
+        training = self.active_trainings.get(training_id)
+        if training:
+            n_episodes = training.get("n_episodes", max(300, training["max_steps"] // 5))
+            return {
+                "training_id": training_id,
+                "status": training["status"],
+                "current_step": training["current_step"],
+                "max_steps": n_episodes,
+                "progress": min(100, training["current_step"] / max(n_episodes, 1) * 100),
+                "latest_metrics": training["metrics_history"][-1] if training["metrics_history"] else None,
+            }
+        return None
 
+    def stop_all_trainings(self):
+        """停止所有训练"""
+        for training_id in list(self.active_trainings.keys()):
+            self.stop_training(training_id)
 
-from datetime import datetime
 
 training_service = TrainingService()

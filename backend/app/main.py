@@ -12,8 +12,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://localhost"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -53,6 +53,11 @@ async def startup_event():
     await seed_default_admin()
     await seed_builtin_templates()
     await seed_default_strategies()
+
+    # 启动定期优化调度器（从数据库恢复已保存的调度）
+    from app.services.scheduler import optimization_scheduler
+    optimization_scheduler.restore_from_db()
+    print("[Startup] Optimization scheduler started")
 
 
 if __name__ == "__main__":

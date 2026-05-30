@@ -139,6 +139,14 @@
                   开始训练
                 </el-button>
                 <el-button
+                  v-if="env.status === 'active' && (!trainingEnvId || trainingEnvId !== env.id)"
+                  type="primary"
+                  size="small"
+                  @click.stop="startTrainAndOptimize(env)"
+                >
+                  训练+优化
+                </el-button>
+                <el-button
                   v-if="trainingEnvId === env.id && isTraining"
                   type="danger"
                   size="small"
@@ -148,6 +156,9 @@
                 </el-button>
                 <span v-if="trainingEnvId === env.id && isTraining" class="training-progress">
                   {{ trainingProgress }}%
+                </span>
+                <span v-if="optTaskId && trainingEnvId === env.id" class="opt-progress">
+                  优化: {{ optProgress }}
                 </span>
                 <el-button
                   size="small"
@@ -167,6 +178,47 @@
             <el-empty v-if="envs.length === 0" description="暂无环境" />
           </div>
         </el-card>
+
+        <!-- 优化迭代详情 -->
+        <el-card v-if="optRounds.length > 0" style="margin-top: 20px">
+          <template #header>
+            <div class="card-header">
+              <span>优化迭代过程</span>
+              <el-tag :type="optProgress.includes('完成') ? 'success' : 'warning'" size="small">
+                {{ optProgress }}
+              </el-tag>
+            </div>
+          </template>
+          <el-table :data="optRounds" size="small" stripe>
+            <el-table-column prop="round" label="轮次" width="60" />
+            <el-table-column label="训练奖励" width="100">
+              <template #default="{ row }">
+                <span :style="{ color: row.reward > 0 ? '#67c23a' : '#f56c6c' }">
+                  {{ row.reward?.toFixed(0) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="成功率" width="80">
+              <template #default="{ row }">
+                {{ (row.sr * 100).toFixed(0) }}%
+              </template>
+            </el-table-column>
+            <el-table-column label="综合评分" width="80">
+              <template #default="{ row }">
+                <el-tag :type="row.score > 50 ? 'success' : row.score > 30 ? 'warning' : 'danger'" size="small">
+                  {{ row.score }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="趋势">
+              <template #default="{ row, $index }">
+                <span v-if="$index > 0">
+                  {{ row.score > optRounds[$index - 1].score ? '↑' : row.score < optRounds[$index - 1].score ? '↓' : '→' }}
+                </span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
       </el-col>
     </el-row>
 
@@ -181,7 +233,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import api from '@/api'
 import { useProjectStore } from '@/stores/project'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -201,6 +253,12 @@ const trainingEnvId = ref<string>('')
 const isTraining = ref(false)
 const trainingProgress = ref(0)
 let trainingPollInterval: number | null = null
+
+// 优化相关
+const optTaskId = ref<string>('')
+const optProgress = ref('')
+const optRounds = ref<any[]>([])
+let optPollInterval: number | null = null
 
 const elevationRange = ref([0, 100])
 
@@ -285,6 +343,40 @@ const getStatusType = (status: string) => {
 onMounted(async () => {
   await loadTemplates()
   await loadEnvs()
+  // 恢复训练状态：检查是否有正在进行的训练
+  await restoreTrainingState()
+})
+
+const restoreTrainingState = async () => {
+  for (const env of envs.value) {
+    try {
+      const resp = await api.get(`/api/envs/${env.id}/training-status`)
+      const data = resp.data.data
+      if (data && data.status === 'running') {
+        trainingEnvId.value = env.id
+        isTraining.value = true
+        trainingProgress.value = Math.min(100, Math.round(data.current_step / data.max_steps * 100))
+        // 恢复轮询
+        trainingPollInterval = window.setInterval(async () => {
+          await checkTrainingStatus(env.id)
+        }, 1000)
+        break
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+}
+
+onUnmounted(() => {
+  if (trainingPollInterval) {
+    clearInterval(trainingPollInterval)
+    trainingPollInterval = null
+  }
+  if (optPollInterval) {
+    clearInterval(optPollInterval)
+    optPollInterval = null
+  }
 })
 
 const loadTemplates = async () => {
@@ -439,10 +531,12 @@ const startTraining = async (env: any) => {
     trainingProgress.value = 0
     ElMessage.success('训练已启动')
 
-    // 开始轮询训练状态
-    trainingPollInterval = window.setInterval(async () => {
-      await checkTrainingStatus(env.id)
-    }, 1000)
+    // 延迟2秒后开始轮询，等线程启动
+    setTimeout(() => {
+      trainingPollInterval = window.setInterval(async () => {
+        await checkTrainingStatus(env.id)
+      }, 1000)
+    }, 2000)
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '启动训练失败')
   }
@@ -466,16 +560,106 @@ const stopTraining = async () => {
   }
 }
 
+const startTrainAndOptimize = async (env: any) => {
+  try {
+    const response = await api.post(`/api/envs/${env.id}/train-and-optimize`, {
+      n_rounds: 5
+    })
+    const data = response.data.data
+    trainingEnvId.value = env.id
+    isTraining.value = true
+    trainingProgress.value = 0
+    optTaskId.value = data.task_id
+    optProgress.value = '运行中...'
+    optRounds.value = []
+    ElMessage.success('迭代式训练+优化已启动')
+
+    // 轮询训练状态
+    setTimeout(() => {
+      trainingPollInterval = window.setInterval(async () => {
+        await checkTrainingStatus(env.id)
+      }, 1000)
+    }, 2000)
+
+    // 轮询优化状态
+    setTimeout(() => {
+      optPollInterval = window.setInterval(async () => {
+        await checkOptStatus(data.task_id)
+      }, 5000)
+    }, 3000)
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '启动失败')
+  }
+}
+
+const checkOptStatus = async (taskId: string) => {
+  try {
+    const response = await api.get(`/api/optimization-tasks/${taskId}`)
+    const data = response.data.data
+    const iter = typeof data.current_iteration === 'number' ? data.current_iteration : 0
+    const roundDisplay = Math.floor(iter)
+    const subPct = Math.round((iter - roundDisplay) * 100)
+    const iterDisplay = subPct > 0 && roundDisplay < data.max_iterations
+      ? `${roundDisplay}/${data.max_iterations} (${subPct}%)`
+      : `${roundDisplay}/${data.max_iterations}`
+    optProgress.value = `${iterDisplay} (最优: ${data.best_score || '-'})`
+
+    // 更新迭代轮次详情：从 DB 读取每轮最后一条指标
+    if (data.current_iteration > optRounds.value.length) {
+      try {
+        if (selectedEnvId.value) {
+          const mr = await api.get(`/api/envs/${selectedEnvId.value}/metrics`, { params: { limit: 1000 } })
+          const allMetrics = mr.data.data || []
+          // 每 50 条取最后一条作为该轮代表
+          const rounds: any[] = []
+          for (let i = 0; i < allMetrics.length; i += 50) {
+            const chunk = allMetrics.slice(i, i + 50)
+            const last = chunk[chunk.length - 1]
+            rounds.push({
+              round: rounds.length + 1,
+              step: last.step,
+              reward: last.episode_reward,
+              sr: last.success_rate,
+              score: (last.convergence_speed * 100).toFixed(0),
+            })
+          }
+          optRounds.value = rounds
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    if (data.status === 'completed') {
+      optProgress.value = `完成! 最优分数: ${data.best_score}`
+      ElMessage.success(`优化完成! 最优分数: ${data.best_score}`)
+      if (optPollInterval) {
+        clearInterval(optPollInterval)
+        optPollInterval = null
+      }
+    } else if (data.status === 'error' || data.status === 'stopped') {
+      optProgress.value = data.status === 'error' ? '出错' : '已停止'
+      if (optPollInterval) {
+        clearInterval(optPollInterval)
+        optPollInterval = null
+      }
+    }
+  } catch (error) {
+    // ignore
+  }
+}
+
 const checkTrainingStatus = async (envId: string) => {
   try {
     const response = await api.get(`/api/envs/${envId}/training-status`)
     const data = response.data.data
 
     if (data) {
-      trainingProgress.value = Math.round(data.progress)
+      // 更新进度（上限100%）
+      const progress = Math.min(100, Math.round(data.current_step / data.max_steps * 100))
+      trainingProgress.value = progress
+
       if (data.status === 'completed' || data.status === 'stopped') {
         isTraining.value = false
-        trainingProgress.value = 0
+        trainingProgress.value = 100
         if (trainingPollInterval) {
           clearInterval(trainingPollInterval)
           trainingPollInterval = null
@@ -539,6 +723,12 @@ const checkTrainingStatus = async (envId: string) => {
 .training-progress {
   font-size: 12px;
   color: #67c23a;
+  font-weight: bold;
+}
+
+.opt-progress {
+  font-size: 12px;
+  color: #409eff;
   font-weight: bold;
 }
 

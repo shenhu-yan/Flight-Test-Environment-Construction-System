@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user, require_project_member, require_project_configurer
 from app.services.config_parser import parse_json_config, parse_xml_config
@@ -166,7 +167,7 @@ async def batch_create_envs(
     db: AsyncSession = Depends(get_db)
 ):
     base_config = batch_data.get("config", {})
-    count = batch_data.get("count", 1)
+    count = min(batch_data.get("count", 1), 20)
     project_id = batch_data.get("project_id")
 
     if not project_id:
@@ -200,6 +201,7 @@ async def batch_create_envs(
 
         generate_env_task.delay(env_id, config, project_id, current_user["id"])
 
+    await db.commit()
     return {"code": 0, "data": {"env_ids": env_ids, "count": count}}
 
 
@@ -478,8 +480,7 @@ async def adjust_env(
         parts = key.split(".")
         if len(parts) == 2:
             section, param = parts
-            if section in config and param in config[section]:
-                config[section][param] = value
+            config.setdefault(section, {})[param] = value
 
     await db.execute(
         text("UPDATE envs SET config = :config, updated_at = NOW() WHERE id = :id"),
@@ -519,11 +520,18 @@ async def adjust_env(
         }
     )
 
-    await send_adjustment_instruction(env[1], env_id, {
-        "type": "adjust_instruction",
-        "strategy": "manual",
-        "new_config": config,
-    })
+    # 先提交数据库事务，确保配置变更持久化
+    await db.commit()
+
+    # WebSocket 发送失败不影响已提交的数据库变更
+    try:
+        await send_adjustment_instruction(env[1], env_id, {
+            "type": "adjust_instruction",
+            "strategy": "manual",
+            "new_config": config,
+        })
+    except Exception as e:
+        print(f"[Adjust] WebSocket send failed (non-fatal): {e}", flush=True)
 
     return {"code": 0, "message": "Environment adjusted successfully"}
 
@@ -615,11 +623,18 @@ async def rollback_env(
         }
     )
 
-    await send_adjustment_instruction(env[1], env_id, {
-        "type": "adjust_instruction",
-        "strategy": "rollback",
-        "new_config": rollback_config,
-    })
+    # 先提交数据库事务，确保回滚操作持久化
+    await db.commit()
+
+    # WebSocket 发送失败不影响已提交的数据库变更
+    try:
+        await send_adjustment_instruction(env[1], env_id, {
+            "type": "adjust_instruction",
+            "strategy": "rollback",
+            "new_config": rollback_config,
+        })
+    except Exception as e:
+        print(f"[Rollback] WebSocket send failed (non-fatal): {e}", flush=True)
 
     return {"code": 0, "message": "Environment rolled back successfully"}
 
@@ -667,9 +682,13 @@ async def get_adjustment_history(
     result = await db.execute(
         text(
             """
-            SELECT id, env_id, snapshot_before, snapshot_after, trigger_type, trigger_rule, operator, created_at
-            FROM adjustment_history WHERE env_id = :env_id
-            ORDER BY created_at DESC
+            SELECT ah.id, ah.env_id, ah.snapshot_before, ah.snapshot_after,
+                   ah.trigger_type, ah.trigger_rule, ah.operator, ah.created_at,
+                   s.reason
+            FROM adjustment_history ah
+            LEFT JOIN env_snapshots s ON ah.snapshot_after = s.id
+            WHERE ah.env_id = :env_id
+            ORDER BY ah.created_at DESC
             """
         ),
         {"env_id": env_id}
@@ -687,6 +706,7 @@ async def get_adjustment_history(
                 "trigger_rule": h[5],
                 "operator": h[6],
                 "created_at": str(h[7]) if h[7] else None,
+                "reason": h[8],
             }
             for h in history
         ]
@@ -724,6 +744,96 @@ async def start_training(
     return {"code": 0, "data": training_result}
 
 
+@router.post("/{env_id}/train-and-optimize")
+async def train_and_optimize(
+    env_id: str,
+    body: dict = None,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """迭代式训练+优化：每轮训练 → 分析结果 → 优化参数 → 换参再训。"""
+    import threading
+    from app.services.training_service import training_service
+    from app.tasks.optimization_tasks import run_optimization_with_training_feedback
+
+    body = body or {}
+
+    result = await db.execute(
+        text("SELECT id, project_id, config FROM envs WHERE id = :id"),
+        {"id": env_id}
+    )
+    env = result.fetchone()
+    if not env:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Environment not found")
+
+    project_id = env[1]
+    config = json.loads(env[2]) if isinstance(env[2], str) else env[2]
+    n_rounds = body.get("n_rounds", 5)
+
+    # 注册一个伪训练条目，让前端可以通过 training-status 追踪进度
+    import uuid as _uuid
+    fake_training_id = str(_uuid.uuid4())
+    training_service.active_trainings[fake_training_id] = {
+        "env_id": env_id,
+        "project_id": project_id,
+        "config": config,
+        "max_steps": 200,
+        "n_episodes": n_rounds * 50,
+        "current_step": 0,
+        "status": "running",
+        "metrics_history": [],
+        "user_id": current_user["id"],
+    }
+
+    import uuid
+    opt_task_id = str(uuid.uuid4())
+
+    # 构建参数空间
+    wind = config.get("atmosphere", {}).get("wind_speed", 10)
+    obs = config.get("obstacles", {}).get("count", 5)
+    def _sr(lo, hi, fb_lo, fb_hi):
+        return [fb_lo, fb_hi] if lo >= hi else [lo, hi]
+    param_space = {
+        "wind_speed": _sr(max(0, wind * 0.5), min(50, wind * 1.5), 0, 30),
+        "obstacle_count": _sr(max(0, obs * 0.5), min(50, obs * 1.5), 0, 15),
+        "wind_direction": [0, 360],
+        "distance_scale": [100, 600],
+        "distance_weight": [0.1, 1.0],
+        "heading_weight": [0.1, 1.0],
+    }
+
+    await db.execute(
+        text(
+            """INSERT INTO optimization_tasks (id, project_id, param_space, weights, max_iterations, current_iteration, status, created_at)
+               VALUES (:id, :pid, :ps, :w, :mi, 0, 'running', NOW())"""
+        ),
+        {
+            "id": opt_task_id, "pid": project_id,
+            "ps": json.dumps(param_space),
+            "w": json.dumps({"diversity": 0.25, "challenge": 0.25, "realism": 0.25, "effectiveness": 0.25}),
+            "mi": n_rounds,
+        }
+    )
+    await db.commit()
+
+    thread = threading.Thread(
+        target=run_optimization_with_training_feedback,
+        args=(opt_task_id, project_id, env_id, config, n_rounds, fake_training_id),
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "code": 0,
+        "data": {
+            "task_id": opt_task_id,
+            "status": "running",
+            "n_rounds": n_rounds,
+            "message": "迭代式训练+优化已启动，每轮训练后自动优化参数",
+        }
+    }
+
+
 @router.post("/{env_id}/stop-training")
 async def stop_training(
     env_id: str,
@@ -746,19 +856,30 @@ async def get_training_status(
 ):
     from app.services.training_service import training_service
 
+    # 优先返回 running 状态的训练，否则返回最新的
+    best = None
     for training_id, training in training_service.active_trainings.items():
         if training["env_id"] == env_id:
-            return {
-                "code": 0,
-                "data": {
-                    "training_id": training_id,
-                    "status": training["status"],
-                    "current_step": training["current_step"],
-                    "max_steps": training["max_steps"],
-                    "progress": training["current_step"] / training["max_steps"] * 100,
-                    "latest_metrics": training["metrics_history"][-1] if training["metrics_history"] else None,
-                }
+            if training["status"] == "running":
+                best = (training_id, training)
+                break
+            if best is None:
+                best = (training_id, training)
+
+    if best:
+        training_id, training = best
+        n_episodes = training.get("n_episodes", max(300, training["max_steps"] // 5))
+        return {
+            "code": 0,
+            "data": {
+                "training_id": training_id,
+                "status": training["status"],
+                "current_step": training["current_step"],
+                "max_steps": n_episodes,
+                "progress": min(100, training["current_step"] / max(n_episodes, 1) * 100),
+                "latest_metrics": training["metrics_history"][-1] if training["metrics_history"] else None,
             }
+        }
 
     return {"code": 0, "data": None}
 

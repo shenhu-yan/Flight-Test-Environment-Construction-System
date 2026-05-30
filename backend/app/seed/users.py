@@ -1,8 +1,6 @@
 from sqlalchemy import text
 from app.core.database import async_session
-from passlib.context import CryptContext
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+import bcrypt
 
 
 async def seed_default_admin():
@@ -11,7 +9,7 @@ async def seed_default_admin():
             text("SELECT id FROM users WHERE username = 'admin'")
         )
         if result.fetchone() is None:
-            hashed_password = pwd_context.hash("admin123")
+            hashed_password = bcrypt.hashpw("admin123".encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             await session.execute(
                 text(
                     """

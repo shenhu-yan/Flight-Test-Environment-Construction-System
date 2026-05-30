@@ -1,4 +1,5 @@
 import json
+import uuid
 from sqlalchemy import text
 from app.core.database import async_session
 from app.services.ws_manager import send_adjustment_instruction
@@ -67,7 +68,7 @@ class StrategyEngine:
         elif operator == ">=":
             return avg_value >= threshold
         elif operator == "==":
-            return avg_value == threshold
+            return abs(avg_value - threshold) < 0.01
 
         return False
 
@@ -85,18 +86,21 @@ class StrategyEngine:
 
             config = json.loads(env[0]) if isinstance(env[0], str) else env[0]
 
+            admin_id = "00000000-0000-0000-0000-000000000001"
+
             snapshot_result = await session.execute(
                 text(
                     """
-                    INSERT INTO env_snapshots (id, env_id, config, trigger_type, reason, created_at)
-                    VALUES (:id, :env_id, :config, 'auto_adjust', :reason, NOW())
+                    INSERT INTO env_snapshots (id, env_id, config, trigger_type, operator, reason, created_at)
+                    VALUES (:id, :env_id, :config, 'auto_adjust', :operator, :reason, NOW())
                     RETURNING id
                     """
                 ),
                 {
-                    "id": f"snapshot_{env_id}_{strategy_id}",
+                    "id": str(uuid.uuid4()),
                     "env_id": env_id,
                     "config": json.dumps(config),
+                    "operator": admin_id,
                     "reason": f"策略触发: {strategy_name}",
                 }
             )
@@ -107,6 +111,7 @@ class StrategyEngine:
                 op = adj.get("op")
                 value = adj.get("value")
 
+                # 气象参数
                 if param in config.get("atmosphere", {}):
                     if op == "multiply":
                         config["atmosphere"][param] = round(config["atmosphere"][param] * value, 2)
@@ -114,24 +119,77 @@ class StrategyEngine:
                         config["atmosphere"][param] = round(config["atmosphere"][param] + value, 2)
                     elif op == "decrease":
                         config["atmosphere"][param] = round(config["atmosphere"][param] - value, 2)
+                    elif op == "set":
+                        config["atmosphere"][param] = value
+
+                # 障碍物数量
                 elif param == "obstacle_count":
                     if op == "increase":
                         config["obstacles"]["count"] = max(0, config["obstacles"]["count"] + int(value))
                     elif op == "decrease":
                         config["obstacles"]["count"] = max(0, config["obstacles"]["count"] - int(value))
 
+                # 着陆区参数（带范围限制）
+                elif param.startswith("landing."):
+                    key = param.split(".")[1]
+                    landing = config.setdefault("landing", {"type": "runway", "width": 100, "length": 200})
+                    if op == "multiply":
+                        landing[key] = round(max(20, min(500, landing.get(key, 100) * value)), 2)
+                    elif op == "increase":
+                        landing[key] = round(max(20, min(500, landing.get(key, 100) + value)), 2)
+                    elif op == "decrease":
+                        landing[key] = max(20, round(landing.get(key, 100) - value, 2))
+                    elif op == "set":
+                        landing[key] = max(20, min(500, value))
+
+                # 阵风参数
+                elif param.startswith("gusts."):
+                    key = param.split(".")[1]
+                    gusts = config.setdefault("gusts", {"enabled": False, "strength": 5, "frequency": 0.05})
+                    if op == "set":
+                        gusts[key] = value
+                    elif op == "multiply":
+                        gusts[key] = round(gusts.get(key, 5) * value, 2)
+                    elif op == "increase":
+                        gusts[key] = round(gusts.get(key, 5) + value, 2)
+                    elif op == "decrease":
+                        gusts[key] = max(0, round(gusts.get(key, 5) - value, 2))
+
+                # 移动障碍物参数
+                elif param.startswith("moving_obstacles."):
+                    key = param.split(".")[1]
+                    moving = config.setdefault("moving_obstacles", {"count": 0, "speed": 5})
+                    if op == "set":
+                        moving[key] = value
+                    elif op == "increase":
+                        moving[key] = moving.get(key, 0) + int(value)
+                    elif op == "decrease":
+                        moving[key] = max(0, moving.get(key, 0) - int(value))
+                    elif op == "multiply":
+                        moving[key] = round(moving.get(key, 5) * value, 2)
+
+                # 奖励参数
+                elif param.startswith("reward."):
+                    key = param.split(".")[1]
+                    reward = config.setdefault("reward", {})
+                    if op == "multiply":
+                        reward[key] = round(reward.get(key, 0) * value, 4)
+                    elif op == "set":
+                        reward[key] = value
+
             snapshot_after_result = await session.execute(
                 text(
                     """
-                    INSERT INTO env_snapshots (id, env_id, config, trigger_type, reason, created_at)
-                    VALUES (:id, :env_id, :config, 'auto_adjust', :reason, NOW())
+                    INSERT INTO env_snapshots (id, env_id, config, trigger_type, operator, reason, created_at)
+                    VALUES (:id, :env_id, :config, 'auto_adjust', :operator, :reason, NOW())
                     RETURNING id
                     """
                 ),
                 {
-                    "id": f"snapshot_{env_id}_{strategy_id}_after",
+                    "id": str(uuid.uuid4()),
                     "env_id": env_id,
                     "config": json.dumps(config),
+                    "operator": admin_id,
                     "reason": f"策略调整后: {strategy_name}",
                 }
             )
@@ -140,16 +198,17 @@ class StrategyEngine:
             await session.execute(
                 text(
                     """
-                    INSERT INTO adjustment_history (id, env_id, snapshot_before, snapshot_after, trigger_type, trigger_rule, created_at)
-                    VALUES (:id, :env_id, :snapshot_before, :snapshot_after, 'auto', :trigger_rule, NOW())
+                    INSERT INTO adjustment_history (id, env_id, snapshot_before, snapshot_after, trigger_type, trigger_rule, operator, created_at)
+                    VALUES (:id, :env_id, :snapshot_before, :snapshot_after, 'auto', :trigger_rule, :operator, NOW())
                     """
                 ),
                 {
-                    "id": f"adj_{env_id}_{strategy_id}",
+                    "id": str(uuid.uuid4()),
                     "env_id": env_id,
                     "snapshot_before": snapshot_before,
                     "snapshot_after": snapshot_after,
                     "trigger_rule": strategy_id,
+                    "operator": admin_id,
                 }
             )
 
